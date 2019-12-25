@@ -1,7 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
+	"log"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -11,6 +16,8 @@ var (
 	ErrIncorrectCmd = errors.New("incorrect cmd")
 
 	ResponseOK = "ok"
+
+	InvalidN = -1
 )
 
 type Whynot struct {
@@ -59,15 +66,46 @@ func (wn *Whynot) prepare() error {
 		}
 		wg.Add(1)
 		go wn.sendPrepareToNode(node, wg, nodeResponses)
+		i++
 	}
+	i = 0
 	wg.Wait()
+	close(nodeResponses)
+	for nodeN := range nodeResponses {
+		log.Println(nodeN)
+		i++
+	}
 
 	return nil
 }
 
 func (wn *Whynot) sendPrepareToNode(node string, wg *sync.WaitGroup, nodeResponses chan int) {
 	defer wg.Done()
-	nodeResponses <- 0
+	conn, err := net.Dial("tcp", node)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	if _, err := fmt.Fprintf(conn, "PREPARE"+strconv.Itoa(wn.N)+"\n"); err != nil {
+		log.Println(err)
+		return
+	}
+
+	log.Println(node, "->", wn.N)
+	nodeResponse, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	log.Println(node, "<-", node)
+	responseN, err := strconv.Atoi(strings.TrimSpace(string(nodeResponse)))
+	if err != nil {
+		log.Println(nodeResponse)
+		log.Println(err)
+	}
+
+	nodeResponses <- responseN
 }
 
 func (wn *Whynot) status() (string, error) {
