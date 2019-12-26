@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
@@ -63,12 +62,8 @@ func main() {
 func Run(c *cli.Context) error {
 	listenAddress := c.String("listen")
 
-	nodesListFile := c.String("nodes")
-	d, err := ioutil.ReadFile(nodesListFile)
-	if err != nil {
-		return err
-	}
-	nodesList := strings.Split(string(d), ",")
+	nodesListString := c.String("nodes")
+	nodesList := strings.Split(nodesListString, ",")
 
 	server, err := NewServer(listenAddress, nodesList)
 	if err != nil {

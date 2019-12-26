@@ -72,23 +72,33 @@ func (server *Server) accept(conn net.Conn, errc chan error) {
 	}
 	defer closeListen()
 
-	var response string
-	defer func() {
-		if _, err := conn.Write([]byte(response + "\n")); err != nil {
+	message, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
 			errc <- err
 			return
 		}
-	}()
-
-	message, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil {
-		response = err.Error()
 		errc <- err
 		return
 	}
 	cmd := strings.TrimSpace(string(message))
 	log.Print("<-", cmd)
-	if response, err = server.whynot.Process(cmd); err != nil {
-		response = err.Error()
+	results := make(chan string)
+	go func() {
+		defer close(results)
+		if err = server.whynot.Process(cmd, results); err != nil {
+			if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
+				errc <- err
+				return
+			}
+			return
+		}
+	}()
+	for result := range results {
+		log.Println("->", result)
+		if _, err := conn.Write([]byte(result + "\n")); err != nil {
+			errc <- err
+			return
+		}
 	}
 }
