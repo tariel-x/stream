@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tariel-x/whynot/client"
 )
 
 var (
@@ -14,15 +16,6 @@ var (
 	ResponseOK = newResponse("ok")
 
 	InvalidN = -1
-)
-
-const (
-	CmdPush    = "PUSH"
-	CmdPull    = "PULL"
-	CmdStatus  = "STATUS"
-	CmdPrepare = "PREPARE"
-	CmdPromise = "PROMISE"
-	CmdRefuse  = "REFUSE"
 )
 
 type Whynot struct {
@@ -41,15 +34,15 @@ func (wn *Whynot) Process(message Request, results chan *Response) error {
 		return err
 	}
 	switch cmd {
-	case CmdPush:
+	case client.CmdPush:
 		return wn.push(cmd, results)
-	case CmdPull:
+	case client.CmdPull:
 		for i := 0; i < 5; i++ {
 			results <- newResponse(strconv.Itoa(i))
 			time.Sleep(time.Millisecond * 300)
 		}
 		return nil
-	case CmdStatus:
+	case client.CmdStatus:
 		return wn.status(results)
 	default:
 		return ErrUnknownCmd
@@ -72,16 +65,16 @@ func parse(message string) (string, string, error) {
 		return "", "", ErrIncorrectCmd
 	}
 	switch parsed[0] {
-	case CmdPush:
+	case client.CmdPush:
 		if len(parsed) < 2 {
 			return "", "", ErrIncorrectCmd
 		}
 		return parsed[0], parsed[1], nil
-	case CmdPull:
+	case client.CmdPull:
 		return parsed[0], "", nil
-	case CmdStatus:
+	case client.CmdStatus:
 		return parsed[0], "", nil
-	case CmdPrepare:
+	case client.CmdPrepare:
 		if len(parsed) < 2 {
 			return "", "", ErrIncorrectCmd
 		}

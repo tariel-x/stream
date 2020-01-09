@@ -63,9 +63,14 @@ func Run(c *cli.Context) error {
 	listenAddress := c.String("listen")
 
 	nodesListString := c.String("nodes")
-	nodesList := strings.Split(nodesListString, ",")
+	nodes := strings.Split(nodesListString, ",")
 
-	server, err := NewServer(listenAddress, nodesList)
+	paxos, err := NewWnPaxos(nodes)
+	if err != nil {
+		return err
+	}
+
+	server, err := NewServer(listenAddress, paxos)
 	if err != nil {
 		return err
 	}

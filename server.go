@@ -13,8 +13,8 @@ type Server struct {
 	whynot        *Whynot
 }
 
-func NewServer(listenAddress string, nodesList []string) (*Server, error) {
-	whynot, err := NewWhynot(nodesList)
+func NewServer(listenAddress string, paxos *WnPaxos) (*Server, error) {
+	whynot, err := NewWhynot(paxos)
 	if err != nil {
 		return nil, err
 	}

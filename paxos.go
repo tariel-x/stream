@@ -1,15 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"errors"
-	"fmt"
 	"log"
-	"net"
-	"strconv"
-	"strings"
 	"sync"
-	"time"
+
+	"github.com/tariel-x/whynot/client"
 )
 
 var (
@@ -17,14 +13,23 @@ var (
 )
 
 type WnPaxos struct {
-	nodesList []string
-	N         int
+	nodes []*client.Client
+	N     int
 }
 
-type NodeResponse struct {
-	*Response
-	PrevAccept *AcceptMessage
-	Promise    bool
+func NewWnPaxos(nodes []string) (*WnPaxos, error) {
+	clients := []*client.Client{}
+	for _, node := range nodes {
+		client, err := client.New(node, nil)
+		if err != nil {
+			return nil, err
+		}
+		clients = append(clients, client)
+	}
+	return &WnPaxos{
+		nodes: clients,
+		N:     0,
+	}, nil
 }
 
 type AcceptMessage struct {
@@ -36,27 +41,27 @@ type AcceptMessage struct {
 
 func (p *WnPaxos) Prepare(value string) (*AcceptMessage, error) {
 	wg := &sync.WaitGroup{}
-	nodeResponses := make(chan NodeResponse, len(p.nodesList))
-	for _, node := range p.nodesList {
+	promises := make(chan client.Promise, len(p.nodes))
+	for _, node := range p.nodes {
 		wg.Add(1)
-		go p.sendPrepareToNode(node, wg, nodeResponses)
+		go p.prepare(node, wg, promises)
 	}
-	minQuorum := (len(p.nodesList) / 2) - 1
+	minQuorum := (len(p.nodes) / 2) - 1
 	wg.Wait()
-	close(nodeResponses)
+	close(promises)
 	count := 0
 	var maxPrevPromisedN int
 	var maxPrevPromisedV string
 
-	for nodeResponse := range nodeResponses {
-		if !nodeResponse.Promise {
+	for promise := range promises {
+		if !promise.Promise {
 			continue
 		}
 		count++
-		if nodeResponse.PrevAccept != nil && nodeResponse.PrevAccept.N < p.N {
-			if nodeResponse.PrevAccept.N > maxPrevPromisedN {
-				maxPrevPromisedN = nodeResponse.PrevAccept.N
-				maxPrevPromisedV = nodeResponse.PrevAccept.V
+		if promise.Previous && promise.N < p.N {
+			if promise.N > maxPrevPromisedN {
+				maxPrevPromisedN = promise.N
+				maxPrevPromisedV = promise.V
 			}
 		}
 	}
@@ -74,63 +79,21 @@ func (p *WnPaxos) Prepare(value string) (*AcceptMessage, error) {
 	return acceptMessage, nil
 }
 
-func (p *WnPaxos) sendPrepareToNode(node string, wg *sync.WaitGroup, nodeResponses chan NodeResponse) {
+func (p *WnPaxos) prepare(nodeClient *client.Client, wg *sync.WaitGroup, promises chan client.Promise) {
 	defer wg.Done()
-	input := fmt.Sprintf("%s %d\n", CmdPrepare, p.N)
-	request, err := makeRequest(input, node)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	response, err := p.requestNode(request)
+
+	response, err := nodeClient.QueryOne(&client.Prepare{N: p.N})
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
-	cmd, args, err := parse(response.Message)
+	promise, err := response.Promise()
 	if err != nil {
-		log.Println(err)
+		log.Println("can not parse reply", err)
 		return
 	}
-
-	nodeResponse := NodeResponse{}
-	if cmd == CmdPromise {
-		nodeResponse.Promise = true
+	if promise != nil {
+		promises <- *promise
 	}
-
-	splitArgs := strings.Split(args, " ")
-	if len(splitArgs) == 2 {
-		previousN, err := strconv.Atoi(splitArgs[0])
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		nodeResponse.PrevAccept = &AcceptMessage{
-			N: previousN,
-			V: splitArgs[1],
-		}
-	}
-
-	nodeResponses <- nodeResponse
-}
-
-func (p *WnPaxos) requestNode(message *Request) (*Response, error) {
-	conn, err := net.DialTimeout("tcp", message.Address, time.Second)
-	if err != nil {
-		return nil, err
-	}
-
-	if _, err := fmt.Fprint(conn, message.Message+"\n"); err != nil {
-		return nil, err
-	}
-
-	log.Println("this ->", message.Address, message.Message)
-
-	nodeResponse, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil {
-		return nil, err
-	}
-	log.Println("this, <-", message.Address, nodeResponse)
-	return newResponse(nodeResponse), nil
 }
