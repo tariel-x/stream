@@ -63,6 +63,27 @@ func (server *Server) Run(ctx context.Context) error {
 	}
 }
 
+type Request struct {
+	Message string
+	Address string
+}
+
+func makeRequest(input, address string) (*Request, error) {
+	message := strings.TrimSpace(input)
+	return &Request{
+		Message: message,
+		Address: address,
+	}, nil
+}
+
+type Response struct {
+	Message string
+}
+
+func newResponse(message string) *Response {
+	return &Response{Message: message}
+}
+
 func (server *Server) accept(conn net.Conn, errc chan error) {
 	closeListen := func() {
 		if err := conn.Close(); err != nil {
@@ -72,7 +93,7 @@ func (server *Server) accept(conn net.Conn, errc chan error) {
 	}
 	defer closeListen()
 
-	message, err := bufio.NewReader(conn).ReadString('\n')
+	input, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
 			errc <- err
@@ -81,12 +102,19 @@ func (server *Server) accept(conn net.Conn, errc chan error) {
 		errc <- err
 		return
 	}
-	cmd := strings.TrimSpace(string(message))
-	log.Print("<-", cmd)
-	results := make(chan string)
+	message, err := makeRequest(input, conn.RemoteAddr().String())
+	if err != nil {
+		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
+			errc <- err
+			return
+		}
+		return
+	}
+	log.Print("this <-", message.Address, message.Message)
+	responses := make(chan *Response)
 	go func() {
-		defer close(results)
-		if err = server.whynot.Process(cmd, results); err != nil {
+		defer close(responses)
+		if err = server.whynot.Process(*message, responses); err != nil {
 			if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
 				errc <- err
 				return
@@ -94,9 +122,9 @@ func (server *Server) accept(conn net.Conn, errc chan error) {
 			return
 		}
 	}()
-	for result := range results {
-		log.Println("->", result)
-		if _, err := conn.Write([]byte(result + "\n")); err != nil {
+	for result := range responses {
+		log.Println("this ->", message.Address, result)
+		if _, err := conn.Write([]byte(result.Message + "\n")); err != nil {
 			errc <- err
 			return
 		}
