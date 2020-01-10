@@ -12,12 +12,14 @@ import (
 )
 
 const (
-	CmdPush    = "PUSH"
-	CmdPull    = "PULL"
-	CmdStatus  = "STATUS"
-	CmdPrepare = "PREPARE"
-	CmdPromise = "PROMISE"
-	CmdRefuse  = "REFUSE"
+	CmdPush     = "PUSH"
+	CmdPull     = "PULL"
+	CmdStatus   = "STATUS"
+	CmdPrepare  = "PREPARE"
+	CmdPromise  = "PROMISE"
+	CmdRefuse   = "REFUSE"
+	CmdAccept   = "ACCEPT"
+	CmdAccepted = "ACCEPTED"
 )
 
 var (
@@ -113,14 +115,6 @@ func (c *Client) QueryOne(r Request) (*Response, error) {
 	return connection.QueryOne(r)
 }
 
-type Prepare struct {
-	N int
-}
-
-func (p *Prepare) String() string {
-	return fmt.Sprintf("%s %d", CmdPrepare, p.N)
-}
-
 type Response struct {
 	Message string
 }
@@ -131,6 +125,14 @@ func (r *Response) Cmd() (string, string) {
 		return "", ""
 	}
 	return parsed[0], parsed[1]
+}
+
+type Prepare struct {
+	N int
+}
+
+func (p *Prepare) String() string {
+	return fmt.Sprintf("%s %d", CmdPrepare, p.N)
 }
 
 type Promise struct {
@@ -161,4 +163,30 @@ func (r *Response) Promise() (*Promise, error) {
 		promise.Previous = true
 	}
 	return promise, nil
+}
+
+type Accept struct {
+	N int
+	V string
+}
+
+func (a *Accept) String() string {
+	return fmt.Sprintf("%s %d %s", CmdAccept, a.N, a.V)
+}
+
+type Accepted struct {
+	Accepted bool
+}
+
+func (r *Response) Accepted() (*Accepted, error) {
+	cmd, _ := r.Cmd()
+	if cmd != CmdAccepted && cmd != CmdRefuse {
+		return nil, ErrInvalidResponse
+	}
+
+	accepted := &Accepted{
+		Accepted: cmd == CmdAccepted,
+	}
+
+	return accepted, nil
 }

@@ -32,7 +32,22 @@ func NewWnPaxos(nodes []string) (*WnPaxos, error) {
 	}, nil
 }
 
-func (p *WnPaxos) Commit(value string) (*AcceptMessage, error) {
+func (p *WnPaxos) Commit(v string) error {
+	acceptMessage := &AcceptMessage{}
+	var err error
+
+	for acceptMessage.V == nil || (acceptMessage.V != nil && *acceptMessage.V != v) {
+		acceptMessage, err = p.commit(p.N, v)
+		if err != nil {
+			return err
+		}
+		// Inc N counter to make the next proposition.
+		p.N = acceptMessage.N + 1
+	}
+	return nil
+}
+
+func (p *WnPaxos) commit(n int, v string) (*AcceptMessage, error) {
 	var acceptMessage *AcceptMessage
 	var err error
 
@@ -40,43 +55,41 @@ commitCycle:
 	for {
 	promisePhase:
 		for {
-			acceptMessage, err = p.Prepare(value)
+			acceptMessage, err = p.prepare(n, v)
 			switch err {
 			case nil:
 				break promisePhase
 			case ErrQuorumFailed:
-				p.N += 2 //TODO: set max proposed N in quorum + 1
+				n += 2 //TODO: set max proposed N in quorum + 1
 			default:
 				return nil, err
 			}
 		}
-		err = p.Accept(acceptMessage)
+		// Accept phase
+		err = p.accept(acceptMessage)
 		switch err {
 		case nil:
 			break commitCycle
 		case ErrQuorumFailed:
-			p.N += 2 //TODO: set max proposed N in quorum + 1
+			n += 2 //TODO: set max proposed N in quorum + 1
 		default:
 			return nil, err
 		}
 	}
-
 	return acceptMessage, nil
 }
 
 type AcceptMessage struct {
 	N int
-	V string
+	V *string
 }
 
-//TODO: make Accept function
-
-func (p *WnPaxos) Prepare(value string) (*AcceptMessage, error) {
+func (p *WnPaxos) prepare(n int, v string) (*AcceptMessage, error) {
 	wg := &sync.WaitGroup{}
 	promises := make(chan client.Promise, len(p.nodes))
 	for _, node := range p.nodes {
 		wg.Add(1)
-		go p.sendPrepare(node, wg, promises)
+		go p.sendPrepare(node, wg, promises, n)
 	}
 
 	wg.Wait()
@@ -90,7 +103,7 @@ func (p *WnPaxos) Prepare(value string) (*AcceptMessage, error) {
 			continue
 		}
 		count++
-		if promise.Previous && promise.N < p.N {
+		if promise.Previous && promise.N < n {
 			if promise.N > maxPrevPromisedN {
 				maxPrevPromisedN = promise.N
 				maxPrevPromisedV = promise.V
@@ -98,25 +111,25 @@ func (p *WnPaxos) Prepare(value string) (*AcceptMessage, error) {
 		}
 	}
 
-	minQuorum := (len(p.nodes) / 2) - 1
+	minQuorum := (len(p.nodes) / 2) + 1
 	if count < minQuorum {
 		return nil, ErrQuorumFailed
 	}
 	acceptMessage := &AcceptMessage{
-		N: p.N,
-		V: value,
+		N: n,
+		V: &v,
 	}
 
 	if maxPrevPromisedN > 0 {
-		acceptMessage.V = maxPrevPromisedV
+		acceptMessage.V = &maxPrevPromisedV
 	}
 	return acceptMessage, nil
 }
 
-func (p *WnPaxos) sendPrepare(nodeClient *client.Client, wg *sync.WaitGroup, promises chan client.Promise) {
+func (p *WnPaxos) sendPrepare(nodeClient *client.Client, wg *sync.WaitGroup, promises chan client.Promise, n int) {
 	defer wg.Done()
 
-	response, err := nodeClient.QueryOne(&client.Prepare{N: p.N})
+	response, err := nodeClient.QueryOne(&client.Prepare{N: n})
 	if err != nil {
 		log.Println(err)
 		return
@@ -132,6 +145,33 @@ func (p *WnPaxos) sendPrepare(nodeClient *client.Client, wg *sync.WaitGroup, pro
 	}
 }
 
-func (p *WnPaxos) Accept(message *AcceptMessage) error {
+func (p *WnPaxos) accept(message *AcceptMessage) error {
+	//TODO: implement
+	wg := &sync.WaitGroup{}
+	accepts := make(chan client.Accepted, len(p.nodes))
+	for _, node := range p.nodes {
+		wg.Add(1)
+		go p.sendAccept(node, wg, accepts, message.N, *message.V)
+	}
+
+	wg.Wait()
+	close(accepts)
+	count := 0
+
+	for accept := range accepts {
+		if !accept.Accepted {
+			continue
+		}
+		count++
+	}
+
+	minQuorum := (len(p.nodes) / 2) + 1
+	if count < minQuorum {
+		return ErrQuorumFailed
+	}
 	return nil
+}
+
+func (p *WnPaxos) sendAccept(nodeClient *client.Client, wg *sync.WaitGroup, accepts chan client.Accepted, n int, v string) {
+	defer wg.Done()
 }
