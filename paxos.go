@@ -13,8 +13,9 @@ var (
 )
 
 type WnPaxos struct {
-	nodes []*client.Client
-	N     int
+	nodes     []*client.Client
+	N         int
+	AcceptedV *string
 }
 
 func NewWnPaxos(nodes []string) (*WnPaxos, error) {
@@ -30,6 +31,30 @@ func NewWnPaxos(nodes []string) (*WnPaxos, error) {
 		nodes: clients,
 		N:     0,
 	}, nil
+}
+
+//Prepare returns true if proposed N is more than last known N.
+//If some value is accepted but not set, it would be also returned.
+func (p *WnPaxos) Prepare(n int) (bool, *AcceptMessage) {
+	if n > p.N {
+		var msg *AcceptMessage
+		if p.AcceptedV != nil {
+			msg.N = p.N
+			msg.V = p.AcceptedV
+		}
+		p.N = n
+		return true, msg
+	}
+	return false, nil
+}
+
+func (p *WnPaxos) Accept(n int, value string) bool {
+	if n >= p.N {
+		p.N = n
+		p.AcceptedV = &value
+		return true
+	}
+	return false
 }
 
 func (p *WnPaxos) Commit(v string) error {
@@ -76,7 +101,7 @@ commitCycle:
 			return nil, err
 		}
 	}
-	return acceptMessage, nil
+	return acceptMessage, p.set(acceptMessage)
 }
 
 type AcceptMessage struct {
@@ -145,8 +170,18 @@ func (p *WnPaxos) sendPrepare(nodeClient *client.Client, wg *sync.WaitGroup, pro
 	}
 }
 
+func (p *WnPaxos) set(message *AcceptMessage) error {
+	setRequest := &client.Set{
+		N: message.N,
+		V: *message.V,
+	}
+	for _, node := range p.nodes {
+		go node.Exec(setRequest)
+	}
+	return nil
+}
+
 func (p *WnPaxos) accept(message *AcceptMessage) error {
-	//TODO: implement
 	wg := &sync.WaitGroup{}
 	accepts := make(chan client.Accepted, len(p.nodes))
 	for _, node := range p.nodes {

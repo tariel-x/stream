@@ -20,6 +20,7 @@ const (
 	CmdRefuse   = "REFUSE"
 	CmdAccept   = "ACCEPT"
 	CmdAccepted = "ACCEPTED"
+	CmdSet      = "SET"
 )
 
 var (
@@ -189,4 +190,13 @@ func (r *Response) Accepted() (*Accepted, error) {
 	}
 
 	return accepted, nil
+}
+
+type Set struct {
+	N int
+	V string
+}
+
+func (s *Set) String() string {
+	return fmt.Sprintf("%s %d %s", CmdSet, s.N, s.V)
 }
