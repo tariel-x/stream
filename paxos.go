@@ -5,6 +5,7 @@ import (
 	"log"
 	"sync"
 
+	"github.com/satori/go.uuid"
 	"github.com/tariel-x/whynot/client"
 )
 
@@ -13,9 +14,11 @@ var (
 )
 
 type WnPaxos struct {
-	nodes     []*client.Client
-	N         int
-	AcceptedV *string
+	nodes      []*client.Client
+	minQuorum  int
+	N          int
+	acceptedV  *string
+	acceptedID *string
 }
 
 func NewWnPaxos(nodes []string) (*WnPaxos, error) {
@@ -27,42 +30,28 @@ func NewWnPaxos(nodes []string) (*WnPaxos, error) {
 		}
 		clients = append(clients, client)
 	}
+	minQuorum := (len(nodes) / 2) + 1
 	return &WnPaxos{
-		nodes: clients,
-		N:     0,
+		nodes:     clients,
+		N:         0,
+		minQuorum: minQuorum,
 	}, nil
 }
 
-//Prepare returns true if proposed N is more than last known N.
-//If some value is accepted but not set, it would be also returned.
-func (p *WnPaxos) Prepare(n int) (bool, *AcceptMessage) {
-	if n > p.N {
-		var msg *AcceptMessage
-		if p.AcceptedV != nil {
-			msg.N = p.N
-			msg.V = p.AcceptedV
-		}
-		p.N = n
-		return true, msg
-	}
-	return false, nil
-}
-
-func (p *WnPaxos) Accept(n int, value string) bool {
-	if n >= p.N {
-		p.N = n
-		p.AcceptedV = &value
-		return true
-	}
-	return false
+type AcceptMessage struct {
+	N  int
+	V  string
+	ID string
 }
 
 func (p *WnPaxos) Commit(v string) error {
-	acceptMessage := &AcceptMessage{}
+	var acceptMessage *AcceptMessage
 	var err error
 
-	for acceptMessage.V == nil || (acceptMessage.V != nil && *acceptMessage.V != v) {
-		acceptMessage, err = p.commit(p.N, v)
+	id := uuid.NewV4().String()
+
+	for acceptMessage == nil || (acceptMessage != nil && acceptMessage.ID != id) {
+		acceptMessage, err = p.commit(p.N, v, id)
 		if err != nil {
 			return err
 		}
@@ -72,7 +61,7 @@ func (p *WnPaxos) Commit(v string) error {
 	return nil
 }
 
-func (p *WnPaxos) commit(n int, v string) (*AcceptMessage, error) {
+func (p *WnPaxos) commit(n int, v, id string) (*AcceptMessage, error) {
 	var acceptMessage *AcceptMessage
 	var err error
 
@@ -80,7 +69,7 @@ commitCycle:
 	for {
 	promisePhase:
 		for {
-			acceptMessage, err = p.prepare(n, v)
+			acceptMessage, err = p.prepare(n, v, id)
 			switch err {
 			case nil:
 				break promisePhase
@@ -104,12 +93,37 @@ commitCycle:
 	return acceptMessage, p.set(acceptMessage)
 }
 
-type AcceptMessage struct {
-	N int
-	V *string
+//Prepare returns true if proposed N is more than last known N.
+//If some value is accepted but not set, it would be also returned.
+func (p *WnPaxos) Prepare(n int) (bool, *AcceptMessage) {
+	if n > p.N {
+		var msg *AcceptMessage
+		if p.acceptedV != nil {
+			msg = &AcceptMessage{
+				N:  p.N,
+				V:  *p.acceptedV,
+				ID: *p.acceptedID,
+			}
+		}
+		p.N = n
+		p.acceptedV = nil
+		p.acceptedID = nil
+		return true, msg
+	}
+	return false, nil
 }
 
-func (p *WnPaxos) prepare(n int, v string) (*AcceptMessage, error) {
+func (p *WnPaxos) Accept(n int, v, id string) bool {
+	if n >= p.N {
+		p.N = n
+		p.acceptedV = &v
+		p.acceptedID = &id
+		return true
+	}
+	return false
+}
+
+func (p *WnPaxos) prepare(n int, v, id string) (*AcceptMessage, error) {
 	wg := &sync.WaitGroup{}
 	promises := make(chan client.Promise, len(p.nodes))
 	for _, node := range p.nodes {
@@ -121,33 +135,31 @@ func (p *WnPaxos) prepare(n int, v string) (*AcceptMessage, error) {
 	close(promises)
 	count := 0
 	var maxPrevPromisedN int
-	var maxPrevPromisedV string
+	acceptMessage := &AcceptMessage{
+		N:  n,
+		V:  v,
+		ID: id,
+	}
+	rejection := false
 
 	for promise := range promises {
 		if !promise.Promise {
-			continue
+			rejection = true
+			break
 		}
 		count++
 		if promise.Previous && promise.N < n {
 			if promise.N > maxPrevPromisedN {
-				maxPrevPromisedN = promise.N
-				maxPrevPromisedV = promise.V
+				acceptMessage.V = promise.V
+				acceptMessage.ID = promise.ID
 			}
 		}
 	}
 
-	minQuorum := (len(p.nodes) / 2) + 1
-	if count < minQuorum {
+	if count < p.minQuorum || rejection {
 		return nil, ErrQuorumFailed
 	}
-	acceptMessage := &AcceptMessage{
-		N: n,
-		V: &v,
-	}
 
-	if maxPrevPromisedN > 0 {
-		acceptMessage.V = &maxPrevPromisedV
-	}
 	return acceptMessage, nil
 }
 
@@ -170,43 +182,62 @@ func (p *WnPaxos) sendPrepare(nodeClient *client.Client, wg *sync.WaitGroup, pro
 	}
 }
 
-func (p *WnPaxos) set(message *AcceptMessage) error {
-	setRequest := &client.Set{
-		N: message.N,
-		V: *message.V,
-	}
-	for _, node := range p.nodes {
-		go node.Exec(setRequest)
-	}
-	return nil
-}
-
 func (p *WnPaxos) accept(message *AcceptMessage) error {
 	wg := &sync.WaitGroup{}
 	accepts := make(chan client.Accepted, len(p.nodes))
 	for _, node := range p.nodes {
 		wg.Add(1)
-		go p.sendAccept(node, wg, accepts, message.N, *message.V)
+		go p.sendAccept(node, wg, accepts, message.N, message.V, message.ID)
 	}
 
 	wg.Wait()
 	close(accepts)
 	count := 0
+	rejection := false
 
 	for accept := range accepts {
 		if !accept.Accepted {
-			continue
+			rejection = true
+			break
 		}
 		count++
 	}
 
-	minQuorum := (len(p.nodes) / 2) + 1
-	if count < minQuorum {
+	if count < p.minQuorum || rejection {
 		return ErrQuorumFailed
 	}
 	return nil
 }
 
-func (p *WnPaxos) sendAccept(nodeClient *client.Client, wg *sync.WaitGroup, accepts chan client.Accepted, n int, v string) {
+func (p *WnPaxos) sendAccept(nodeClient *client.Client, wg *sync.WaitGroup, accepts chan client.Accepted, n int, v, id string) {
 	defer wg.Done()
+	response, err := nodeClient.QueryOne(&client.Accept{
+		N:  n,
+		V:  v,
+		ID: id,
+	})
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	agreement, err := response.Accepted()
+	if err != nil {
+		log.Println("can not parse reply", err)
+		return
+	}
+	if agreement != nil {
+		accepts <- *agreement
+	}
+}
+
+func (p *WnPaxos) set(message *AcceptMessage) error {
+	setRequest := &client.Set{
+		N: message.N,
+		V: message.V,
+	}
+	for _, node := range p.nodes {
+		go node.Exec(setRequest)
+	}
+	return nil
 }

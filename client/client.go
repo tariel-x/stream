@@ -141,6 +141,7 @@ type Promise struct {
 	Previous bool
 	N        int
 	V        string
+	ID       string
 }
 
 func (r *Response) Promise() (*Promise, error) {
@@ -154,25 +155,27 @@ func (r *Response) Promise() (*Promise, error) {
 	}
 
 	splitArgs := strings.Split(args, " ")
-	if len(splitArgs) == 2 {
+	if len(splitArgs) == 3 {
 		previousN, err := strconv.Atoi(splitArgs[0])
 		if err != nil {
 			return nil, err
 		}
 		promise.N = previousN
-		promise.V = splitArgs[1]
+		promise.ID = splitArgs[1]
+		promise.V = splitArgs[2]
 		promise.Previous = true
 	}
 	return promise, nil
 }
 
 type Accept struct {
-	N int
-	V string
+	N  int
+	V  string
+	ID string
 }
 
 func (a *Accept) String() string {
-	return fmt.Sprintf("%s %d %s", CmdAccept, a.N, a.V)
+	return fmt.Sprintf("%s %d %s %s", CmdAccept, a.N, a.ID, a.V)
 }
 
 type Accepted struct {
