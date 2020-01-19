@@ -42,22 +42,28 @@ func (l *Log) Set(ctx context.Context, n int, v string) error {
 	return nil
 }
 
-func (l *Log) Pull(ctx context.Context, n int, results chan string) error {
-	l.m.RLock()
-	defer l.m.RUnlock()
+func (l *Log) Pull(ctx context.Context, n int) (chan string, error) {
+	results := make(chan string)
+
 	if n < 0 {
-		return errors.New("invalid n")
+		return nil, errors.New("invalid n")
 	}
-	for _, item := range l.log {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
+	go func() {
+		l.m.RLock()
+		defer l.m.RUnlock()
+		defer close(results)
+		for _, item := range l.log {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			if item.n < n {
+				continue
+			}
+			results <- item.v
 		}
-		if item.n < n {
-			continue
-		}
-		results <- item.v
-	}
-	return nil
+	}()
+
+	return results, nil
 }

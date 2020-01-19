@@ -45,7 +45,7 @@ type Client struct {
 func New(address string, timeout *time.Duration) (*Client, error) {
 	client := &Client{
 		Address: address,
-		Timeout: time.Second,
+		Timeout: time.Minute,
 		Logger:  &NullLogger{},
 	}
 	if timeout != nil {
@@ -80,14 +80,14 @@ type Request interface {
 
 func (c *Connection) Exec(r Request) error {
 	message := r.String()
-	c.Client.Logger.Println("request to", c.Client.Address, message)
+	c.Client.Logger.Println("this -> ", c.Client.Address, message)
 	_, err := fmt.Fprint(c.connection, message+"\n")
 	return err
 }
 
 func (c *Connection) QueryOne(r Request) (*Response, error) {
 	message := r.String()
-	c.Client.Logger.Println("request to", c.Client.Address, message)
+	c.Client.Logger.Println("this -> ", c.Client.Address, message)
 	if _, err := fmt.Fprint(c.connection, message+"\n"); err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func (c *Connection) QueryOne(r Request) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Println("response from", c.Client.Address, nodeResponse)
+	log.Println("this <- ", c.Client.Address, nodeResponse)
 	return &Response{Message: nodeResponse}, nil
 }
 
@@ -126,7 +126,12 @@ func (r *Response) Cmd() (string, string) {
 	if len(parsed) == 0 {
 		return "", ""
 	}
-	return parsed[0], parsed[1]
+	cmd := strings.TrimSpace(parsed[0])
+	if len(parsed) == 1 {
+		return cmd, ""
+	}
+	args := strings.TrimSpace(parsed[1])
+	return cmd, args
 }
 
 type Prepare struct {

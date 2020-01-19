@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"os/signal"
@@ -66,11 +67,23 @@ func main() {
 
 func Run(c *cli.Context) error {
 	listenAddress := c.String("listen")
+	if listenAddress == "" {
+		return errors.New("invalid listen address")
+	}
 
 	nodesListString := c.String("nodes")
-	nodes := strings.Split(nodesListString, ",")
+	if nodesListString == "" {
+		return errors.New("invalid nodes list")
+	}
+	allNodes := strings.Split(nodesListString, ",")
+	nodes := make([]string, 0, len(allNodes)-1)
+	for _, node := range allNodes {
+		if node != listenAddress {
+			nodes = append(nodes, node)
+		}
+	}
 
-	pxs, err := paxos.NewWnPaxos(nodes)
+	pxs, err := paxos.NewPaxos(nodes)
 	if err != nil {
 		return err
 	}

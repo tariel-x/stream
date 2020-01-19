@@ -122,7 +122,7 @@ func (server *Server) accept(parent context.Context, conn net.Conn, errc chan er
 		}
 		return
 	}
-	log.Print("this <-", request.Address, request.Message)
+	log.Printf("this <- %s %s\n", request.Address(), request.Message())
 	response := NewResponse()
 	go func() {
 		defer close(response.messages)
@@ -135,7 +135,7 @@ func (server *Server) accept(parent context.Context, conn net.Conn, errc chan er
 		}
 	}()
 	for message := range response.messages {
-		log.Println("this ->", request.Address, message)
+		log.Printf("this -> %s %s", request.Address(), message)
 		if _, err := conn.Write([]byte(message + "\n")); err != nil {
 			errc <- err
 			return

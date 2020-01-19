@@ -36,7 +36,7 @@ type ServerResponse interface {
 
 type Log interface {
 	Set(context.Context, int, string) error
-	Pull(context.Context, int, chan string) error
+	Pull(context.Context, int) (chan string, error)
 }
 
 type AcceptMessage interface {
@@ -47,7 +47,8 @@ type AcceptMessage interface {
 
 type Paxos interface {
 	Commit(string) (int, error)
-	Prepare(n int) (bool, interface{})
+	Prepare(n int) (bool, AcceptMessage)
+	Accept(n int, v, id string) bool
 }
 
 type Handler struct {
@@ -80,7 +81,7 @@ func (h *Handler) Process(ctx context.Context, message ServerRequest, response S
 		if err != nil {
 			return err
 		}
-		return h.Push(*request, response)
+		return h.Push(request, response)
 	case client.CmdPull:
 		request, err := NewPullRequest(*parsed)
 		if err != nil {
@@ -89,6 +90,24 @@ func (h *Handler) Process(ctx context.Context, message ServerRequest, response S
 		return h.Pull(*request, response)
 	case client.CmdStatus:
 		return h.Status(response)
+	case client.CmdSet:
+		request, err := NewSetRequest(*parsed)
+		if err != nil {
+			return err
+		}
+		return h.Set(request, response)
+	case client.CmdPrepare:
+		request, err := NewPrepareRequest(*parsed)
+		if err != nil {
+			return err
+		}
+		return h.Prepare(request, response)
+	case client.CmdAccept:
+		request, err := NewAcceptRequest(*parsed)
+		if err != nil {
+			return err
+		}
+		return h.Accept(request, response)
 	default:
 		return ErrUnknownCmd
 	}

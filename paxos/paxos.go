@@ -7,13 +7,49 @@ import (
 
 	"github.com/satori/go.uuid"
 	"github.com/tariel-x/whynot/client"
+	"github.com/tariel-x/whynot/stream"
 )
 
 var (
 	ErrQuorumFailed = errors.New("quorum failed")
 )
 
-type WnPaxos struct {
+type Paxos struct {
+	*paxos
+	m *sync.Mutex
+}
+
+func NewPaxos(nodes []string) (*Paxos, error) {
+	wnpaxos, err := newPaxos(nodes)
+	return &Paxos{
+		paxos: wnpaxos,
+		m:     &sync.Mutex{},
+	}, err
+}
+
+func (p *Paxos) Prepare(n int) (bool, stream.AcceptMessage) {
+	p.m.Lock()
+	defer p.m.Unlock()
+	accepted, acceptMessage := p.paxos.Prepare(n)
+	if acceptMessage == nil {
+		return accepted, nil
+	}
+	return accepted, stream.AcceptMessage(acceptMessage)
+}
+
+func (p *Paxos) Accept(n int, v, id string) bool {
+	p.m.Lock()
+	defer p.m.Unlock()
+	return p.paxos.Accept(n, v, id)
+}
+
+func (p *Paxos) Commit(v string) (int, error) {
+	p.m.Lock()
+	defer p.m.Unlock()
+	return p.paxos.Commit(v)
+}
+
+type paxos struct {
 	nodes      []*client.Client
 	minQuorum  int
 	N          int
@@ -21,16 +57,7 @@ type WnPaxos struct {
 	acceptedID *string
 }
 
-type Paxos struct {
-	*WnPaxos
-}
-
-func NewPaxos(nodes []string) (*Paxos, error) {
-	wnpaxos, err := NewWnPaxos(nodes)
-	return &Paxos{wnpaxos}, err
-}
-
-func NewWnPaxos(nodes []string) (*WnPaxos, error) {
+func newPaxos(nodes []string) (*paxos, error) {
 	clients := []*client.Client{}
 	for _, node := range nodes {
 		client, err := client.New(node, nil)
@@ -40,7 +67,7 @@ func NewWnPaxos(nodes []string) (*WnPaxos, error) {
 		clients = append(clients, client)
 	}
 	minQuorum := (len(nodes) / 2) + 1
-	return &WnPaxos{
+	return &paxos{
 		nodes:     clients,
 		N:         0,
 		minQuorum: minQuorum,
@@ -63,7 +90,7 @@ func (am *AcceptMessage) V() string {
 	return am.v
 }
 
-func (p *WnPaxos) Commit(v string) (int, error) {
+func (p *paxos) Commit(v string) (int, error) {
 	var acceptMessage *AcceptMessage
 	var err error
 
@@ -80,7 +107,7 @@ func (p *WnPaxos) Commit(v string) (int, error) {
 	return acceptMessage.n, nil
 }
 
-func (p *WnPaxos) commit(n int, v, id string) (*AcceptMessage, error) {
+func (p *paxos) commit(n int, v, id string) (*AcceptMessage, error) {
 	var acceptMessage *AcceptMessage
 	var err error
 
@@ -114,7 +141,7 @@ commitCycle:
 
 //Prepare returns true if proposed N is more than last known N.
 //If some value is accepted but not set, it would be also returned.
-func (p *WnPaxos) Prepare(n int) (bool, *AcceptMessage) {
+func (p *paxos) Prepare(n int) (bool, *AcceptMessage) {
 	if n > p.N {
 		var msg *AcceptMessage
 		if p.acceptedV != nil {
@@ -132,7 +159,7 @@ func (p *WnPaxos) Prepare(n int) (bool, *AcceptMessage) {
 	return false, nil
 }
 
-func (p *WnPaxos) Accept(n int, v, id string) bool {
+func (p *paxos) Accept(n int, v, id string) bool {
 	if n >= p.N {
 		p.N = n
 		p.acceptedV = &v
@@ -142,7 +169,7 @@ func (p *WnPaxos) Accept(n int, v, id string) bool {
 	return false
 }
 
-func (p *WnPaxos) prepare(n int, v, id string) (*AcceptMessage, error) {
+func (p *paxos) prepare(n int, v, id string) (*AcceptMessage, error) {
 	wg := &sync.WaitGroup{}
 	promises := make(chan client.Promise, len(p.nodes))
 	for _, node := range p.nodes {
@@ -182,7 +209,7 @@ func (p *WnPaxos) prepare(n int, v, id string) (*AcceptMessage, error) {
 	return acceptMessage, nil
 }
 
-func (p *WnPaxos) sendPrepare(nodeClient *client.Client, wg *sync.WaitGroup, promises chan client.Promise, n int) {
+func (p *paxos) sendPrepare(nodeClient *client.Client, wg *sync.WaitGroup, promises chan client.Promise, n int) {
 	defer wg.Done()
 
 	response, err := nodeClient.QueryOne(&client.Prepare{N: n})
@@ -201,7 +228,7 @@ func (p *WnPaxos) sendPrepare(nodeClient *client.Client, wg *sync.WaitGroup, pro
 	}
 }
 
-func (p *WnPaxos) accept(message *AcceptMessage) error {
+func (p *paxos) accept(message *AcceptMessage) error {
 	wg := &sync.WaitGroup{}
 	accepts := make(chan client.Accepted, len(p.nodes))
 	for _, node := range p.nodes {
@@ -228,7 +255,7 @@ func (p *WnPaxos) accept(message *AcceptMessage) error {
 	return nil
 }
 
-func (p *WnPaxos) sendAccept(nodeClient *client.Client, wg *sync.WaitGroup, accepts chan client.Accepted, n int, v, id string) {
+func (p *paxos) sendAccept(nodeClient *client.Client, wg *sync.WaitGroup, accepts chan client.Accepted, n int, v, id string) {
 	defer wg.Done()
 	response, err := nodeClient.QueryOne(&client.Accept{
 		N:  n,
@@ -250,7 +277,7 @@ func (p *WnPaxos) sendAccept(nodeClient *client.Client, wg *sync.WaitGroup, acce
 	}
 }
 
-func (p *WnPaxos) set(message *AcceptMessage) error {
+func (p *paxos) set(message *AcceptMessage) error {
 	setRequest := &client.Set{
 		N: message.n,
 		V: message.v,
