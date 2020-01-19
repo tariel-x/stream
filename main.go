@@ -9,15 +9,20 @@ import (
 	"syscall"
 
 	"github.com/urfave/cli"
+
+	storage "github.com/tariel-x/whynot/log"
+	"github.com/tariel-x/whynot/paxos"
+	"github.com/tariel-x/whynot/server"
+	"github.com/tariel-x/whynot/stream"
 )
 
 var backgroundContext context.Context
 
 func main() {
 	app := cli.NewApp()
-	app.Name = "WhyNpt"
+	app.Name = "Στρεαμ"
 	app.Version = "0.1"
-	app.Usage = "WhyNot is distributed log made with Paxos"
+	app.Usage = "Στρεαμ is distributed log made with Paxos"
 
 	app.Commands = []cli.Command{
 		{
@@ -28,7 +33,7 @@ func main() {
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:  "nodes, n",
-					Usage: "List of nodes including current",
+					Usage: "List of nodes separated by comma ','. Current node would be skipped.",
 				},
 				cli.StringFlag{
 					Name:  "listen, l",
@@ -65,14 +70,24 @@ func Run(c *cli.Context) error {
 	nodesListString := c.String("nodes")
 	nodes := strings.Split(nodesListString, ",")
 
-	paxos, err := NewWnPaxos(nodes)
+	pxs, err := paxos.NewWnPaxos(nodes)
 	if err != nil {
 		return err
 	}
 
-	server, err := NewServer(listenAddress, paxos)
+	lg, err := storage.NewLog()
 	if err != nil {
 		return err
 	}
-	return server.Run(backgroundContext)
+
+	hndlr, err := stream.NewHandler(lg, pxs)
+	if err != nil {
+		return err
+	}
+
+	srv, err := server.NewServer(listenAddress, hndlr)
+	if err != nil {
+		return err
+	}
+	return srv.Run(backgroundContext)
 }

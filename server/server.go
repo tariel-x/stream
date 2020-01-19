@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"bufio"
@@ -6,21 +6,19 @@ import (
 	"log"
 	"net"
 	"strings"
+
+	"github.com/tariel-x/whynot/stream"
 )
 
 type Server struct {
 	listenAddress string
-	whynot        *Whynot
+	handler       *stream.Handler
 }
 
-func NewServer(listenAddress string, paxos *WnPaxos) (*Server, error) {
-	whynot, err := NewWhynot(paxos)
-	if err != nil {
-		return nil, err
-	}
+func NewServer(listenAddress string, handler *stream.Handler) (*Server, error) {
 	return &Server{
 		listenAddress: listenAddress,
-		whynot:        whynot,
+		handler:       handler,
 	}, nil
 }
 
@@ -50,7 +48,7 @@ func (server *Server) Run(ctx context.Context) error {
 				errc <- err
 				return
 			}
-			go server.accept(conn, errc)
+			go server.accept(ctx, conn, errc)
 		}
 	}()
 
@@ -64,27 +62,41 @@ func (server *Server) Run(ctx context.Context) error {
 }
 
 type Request struct {
-	Message string
-	Address string
+	message string
+	address string
+}
+
+func (r *Request) Message() string {
+	return r.message
+}
+
+func (r *Request) Address() string {
+	return r.address
 }
 
 func makeRequest(input, address string) (*Request, error) {
 	message := strings.TrimSpace(input)
 	return &Request{
-		Message: message,
-		Address: address,
+		message: message,
+		address: address,
 	}, nil
 }
 
 type Response struct {
-	Message string
+	messages chan string
 }
 
-func newResponse(message string) *Response {
-	return &Response{Message: message}
+func NewResponse() *Response {
+	return &Response{messages: make(chan string)}
 }
 
-func (server *Server) accept(conn net.Conn, errc chan error) {
+func (r *Response) Push(message string) {
+	r.messages <- message
+}
+
+func (server *Server) accept(parent context.Context, conn net.Conn, errc chan error) {
+	ctx, _ := context.WithCancel(parent)
+
 	closeListen := func() {
 		if err := conn.Close(); err != nil {
 			errc <- err
@@ -102,7 +114,7 @@ func (server *Server) accept(conn net.Conn, errc chan error) {
 		errc <- err
 		return
 	}
-	message, err := makeRequest(input, conn.RemoteAddr().String())
+	request, err := makeRequest(input, conn.RemoteAddr().String())
 	if err != nil {
 		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
 			errc <- err
@@ -110,11 +122,11 @@ func (server *Server) accept(conn net.Conn, errc chan error) {
 		}
 		return
 	}
-	log.Print("this <-", message.Address, message.Message)
-	responses := make(chan *Response)
+	log.Print("this <-", request.Address, request.Message)
+	response := NewResponse()
 	go func() {
-		defer close(responses)
-		if err = server.whynot.Process(*message, responses); err != nil {
+		defer close(response.messages)
+		if err = server.handler.Process(ctx, request, response); err != nil {
 			if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
 				errc <- err
 				return
@@ -122,9 +134,9 @@ func (server *Server) accept(conn net.Conn, errc chan error) {
 			return
 		}
 	}()
-	for result := range responses {
-		log.Println("this ->", message.Address, result)
-		if _, err := conn.Write([]byte(result.Message + "\n")); err != nil {
+	for message := range response.messages {
+		log.Println("this ->", request.Address, message)
+		if _, err := conn.Write([]byte(message + "\n")); err != nil {
 			errc <- err
 			return
 		}

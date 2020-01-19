@@ -1,4 +1,4 @@
-package main
+package paxos
 
 import (
 	"errors"
@@ -39,9 +39,21 @@ func NewWnPaxos(nodes []string) (*WnPaxos, error) {
 }
 
 type AcceptMessage struct {
-	N  int
-	V  string
-	ID string
+	n  int
+	id string
+	v  string
+}
+
+func (am *AcceptMessage) N() int {
+	return am.n
+}
+
+func (am *AcceptMessage) V() string {
+	return am.v
+}
+
+func (am *AcceptMessage) ID() string {
+	return am.id
 }
 
 func (p *WnPaxos) Commit(v string) error {
@@ -50,13 +62,13 @@ func (p *WnPaxos) Commit(v string) error {
 
 	id := uuid.NewV4().String()
 
-	for acceptMessage == nil || (acceptMessage != nil && acceptMessage.ID != id) {
+	for acceptMessage == nil || (acceptMessage != nil && acceptMessage.id != id) {
 		acceptMessage, err = p.commit(p.N, v, id)
 		if err != nil {
 			return err
 		}
 		// Inc N counter to make the next proposition.
-		p.N = acceptMessage.N + 1
+		p.N = acceptMessage.n + 1
 	}
 	return nil
 }
@@ -100,9 +112,9 @@ func (p *WnPaxos) Prepare(n int) (bool, *AcceptMessage) {
 		var msg *AcceptMessage
 		if p.acceptedV != nil {
 			msg = &AcceptMessage{
-				N:  p.N,
-				V:  *p.acceptedV,
-				ID: *p.acceptedID,
+				n:  p.N,
+				id: *p.acceptedID,
+				v:  *p.acceptedV,
 			}
 		}
 		p.N = n
@@ -136,9 +148,9 @@ func (p *WnPaxos) prepare(n int, v, id string) (*AcceptMessage, error) {
 	count := 0
 	var maxPrevPromisedN int
 	acceptMessage := &AcceptMessage{
-		N:  n,
-		V:  v,
-		ID: id,
+		n:  n,
+		id: id,
+		v:  v,
 	}
 	rejection := false
 
@@ -150,8 +162,8 @@ func (p *WnPaxos) prepare(n int, v, id string) (*AcceptMessage, error) {
 		count++
 		if promise.Previous && promise.N < n {
 			if promise.N > maxPrevPromisedN {
-				acceptMessage.V = promise.V
-				acceptMessage.ID = promise.ID
+				acceptMessage.v = promise.V
+				acceptMessage.id = promise.ID
 			}
 		}
 	}
@@ -187,7 +199,7 @@ func (p *WnPaxos) accept(message *AcceptMessage) error {
 	accepts := make(chan client.Accepted, len(p.nodes))
 	for _, node := range p.nodes {
 		wg.Add(1)
-		go p.sendAccept(node, wg, accepts, message.N, message.V, message.ID)
+		go p.sendAccept(node, wg, accepts, message.n, message.v, message.id)
 	}
 
 	wg.Wait()
@@ -233,8 +245,8 @@ func (p *WnPaxos) sendAccept(nodeClient *client.Client, wg *sync.WaitGroup, acce
 
 func (p *WnPaxos) set(message *AcceptMessage) error {
 	setRequest := &client.Set{
-		N: message.N,
-		V: message.V,
+		N: message.n,
+		V: message.v,
 	}
 	for _, node := range p.nodes {
 		go node.Exec(setRequest)
