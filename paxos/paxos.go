@@ -21,6 +21,15 @@ type WnPaxos struct {
 	acceptedID *string
 }
 
+type Paxos struct {
+	*WnPaxos
+}
+
+func NewPaxos(nodes []string) (*Paxos, error) {
+	wnpaxos, err := NewWnPaxos(nodes)
+	return &Paxos{wnpaxos}, err
+}
+
 func NewWnPaxos(nodes []string) (*WnPaxos, error) {
 	clients := []*client.Client{}
 	for _, node := range nodes {
@@ -47,16 +56,14 @@ type AcceptMessage struct {
 func (am *AcceptMessage) N() int {
 	return am.n
 }
-
+func (am *AcceptMessage) ID() string {
+	return am.id
+}
 func (am *AcceptMessage) V() string {
 	return am.v
 }
 
-func (am *AcceptMessage) ID() string {
-	return am.id
-}
-
-func (p *WnPaxos) Commit(v string) error {
+func (p *WnPaxos) Commit(v string) (int, error) {
 	var acceptMessage *AcceptMessage
 	var err error
 
@@ -65,12 +72,12 @@ func (p *WnPaxos) Commit(v string) error {
 	for acceptMessage == nil || (acceptMessage != nil && acceptMessage.id != id) {
 		acceptMessage, err = p.commit(p.N, v, id)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		// Inc N counter to make the next proposition.
 		p.N = acceptMessage.n + 1
 	}
-	return nil
+	return acceptMessage.n, nil
 }
 
 func (p *WnPaxos) commit(n int, v, id string) (*AcceptMessage, error) {

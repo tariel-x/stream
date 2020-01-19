@@ -35,12 +35,19 @@ type ServerResponse interface {
 }
 
 type Log interface {
-	Push(context.Context, string) error
+	Set(context.Context, int, string) error
 	Pull(context.Context, int, chan string) error
 }
 
+type AcceptMessage interface {
+	N() int
+	ID() string
+	V() string
+}
+
 type Paxos interface {
-	Commit(string) error
+	Commit(string) (int, error)
+	Prepare(n int) (bool, interface{})
 }
 
 type Handler struct {
@@ -128,7 +135,7 @@ func NewPullRequest(request Request) (*PullRequest, error) {
 
 type PushRequest struct {
 	Request
-	value string
+	v string
 }
 
 func NewPushRequest(request Request) (*PushRequest, error) {
@@ -140,7 +147,7 @@ func NewPushRequest(request Request) (*PushRequest, error) {
 	}
 	return &PushRequest{
 		Request: request,
-		value:   request.args[0],
+		v:       request.args[0],
 	}, nil
 }
 

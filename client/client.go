@@ -21,6 +21,7 @@ const (
 	CmdAccept   = "ACCEPT"
 	CmdAccepted = "ACCEPTED"
 	CmdSet      = "SET"
+	CmdOK       = "OK"
 )
 
 var (

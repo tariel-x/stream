@@ -5,19 +5,25 @@ import (
 	"errors"
 	"strconv"
 	"sync"
-	"time"
 )
 
+type item struct {
+	n int
+	v string
+}
+
 type Log struct {
-	log []string
+	log []item
 	m   *sync.RWMutex
 }
 
 func NewLog() (*Log, error) {
-	dumnMessages := []string{}
+	dumnMessages := []item{}
 	for i := 0; i < 10; i++ {
-		dumnMessages = append(dumnMessages, strconv.Itoa(i))
-		time.Sleep(time.Millisecond * 300)
+		dumnMessages = append(dumnMessages, item{
+			n: i,
+			v: strconv.Itoa(i),
+		})
 	}
 
 	return &Log{
@@ -26,26 +32,32 @@ func NewLog() (*Log, error) {
 	}, nil
 }
 
-func (l *Log) Push(ctx context.Context, message string) error {
+func (l *Log) Set(ctx context.Context, n int, v string) error {
 	l.m.Lock()
 	defer l.m.Unlock()
-	l.log = append(l.log, message)
+	l.log = append(l.log, item{
+		n: n,
+		v: v,
+	})
 	return nil
 }
 
 func (l *Log) Pull(ctx context.Context, n int, results chan string) error {
 	l.m.RLock()
 	defer l.m.RUnlock()
-	if n > len(l.log) || n < 0 {
+	if n < 0 {
 		return errors.New("invalid n")
 	}
-	for _, item := range l.log[n:] {
+	for _, item := range l.log {
 		select {
 		case <-ctx.Done():
 			return nil
 		default:
 		}
-		results <- item
+		if item.n < n {
+			continue
+		}
+		results <- item.v
 	}
 	return nil
 }
