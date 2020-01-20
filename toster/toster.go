@@ -2,12 +2,16 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/urfave/cli"
+
+	"github.com/tariel-x/whynot/client"
 )
 
 func main() {
@@ -43,26 +47,83 @@ func Run(c *cli.Context) error {
 	if nodesListString == "" {
 		return errors.New("invalid nodes list")
 	}
-	nodes := strings.Split(nodesListString, ",")
+	nodeAddresses := strings.Split(nodesListString, ",")
+	tosts := []*Toster{}
+	for _, node := range nodeAddresses {
+		toster, err := newToster(node)
+		if err != nil {
+			return err
+		}
+		tosts = append(tosts, toster)
+	}
 
 	wg := &sync.WaitGroup{}
-	for _, node := range nodes {
-		toster := newToster(node)
-		go toster.Begin(wg)
+	for _, tost := range tosts {
+		wg.Add(1)
+		go tost.Begin(wg)
 	}
 	wg.Wait()
+
+	wg = &sync.WaitGroup{}
+	for _, tost := range tosts {
+		wg.Add(1)
+		go tost.Read(wg)
+	}
+	wg.Wait()
+
+	for _, tost := range tosts {
+		fmt.Println(tost.results)
+	}
 	return nil
 }
 
 type Toster struct {
-	node string
+	node    string
+	client  *client.Client
+	prefix  string
+	results []string
 }
 
-func newToster(node string) *Toster {
-	return &Toster{node: node}
+func newToster(node string) (*Toster, error) {
+	client, err := client.New(node, nil)
+	prefix := string(byte(97 + rand.Intn(26)))
+	return &Toster{
+		node:    node,
+		client:  client,
+		prefix:  prefix,
+		results: []string{},
+	}, err
 }
 
 func (t *Toster) Begin(wg *sync.WaitGroup) {
 	defer wg.Done()
-	return
+
+	for i := 0; i < 5; i++ {
+		msg := fmt.Sprintf("%s%d", t.prefix, i)
+		log.Println("send PUSH", msg, "to", t.node)
+		response, err := t.client.QueryOne(&client.Push{V: msg})
+		if err != nil {
+			log.Println("error", err)
+		}
+		ok, err := response.Ok()
+		if err != nil {
+			log.Println("error", err)
+		}
+		if !ok {
+			log.Printf("PUSH %s failed", msg)
+		}
+	}
+}
+
+func (t *Toster) Read(wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	responses, err := t.client.QueryMain(&client.Pull{N: 0})
+	if err != nil {
+		log.Println("error", err)
+	}
+	t.results = []string{}
+	for response := range responses {
+		t.results = append(t.results, response.Message)
+	}
 }

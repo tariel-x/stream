@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -44,7 +45,7 @@ type Client struct {
 func New(address string, timeout *time.Duration) (*Client, error) {
 	client := &Client{
 		Address: address,
-		Timeout: time.Minute,
+		Timeout: time.Second * 2,
 		Logger:  &NullLogger{},
 	}
 	if timeout != nil {
@@ -98,6 +99,31 @@ func (c *Connection) QueryOne(r Request) (*Response, error) {
 	return &Response{Message: nodeResponse}, nil
 }
 
+func (c *Connection) QueryMany(r Request) (chan *Response, error) {
+	message := r.String()
+	c.Client.Logger.Println("this -> ", c.Client.Address, message)
+	if _, err := fmt.Fprint(c.connection, message+"\n"); err != nil {
+		return nil, err
+	}
+	responses := make(chan *Response)
+	go func() {
+		defer close(responses)
+		for {
+			nodeResponse, err := bufio.NewReader(c.connection).ReadString('\n')
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				c.Client.Logger.Println("error", err.Error())
+				continue
+			}
+			responses <- &Response{Message: nodeResponse}
+			c.Client.Logger.Println("this <- ", c.Client.Address, nodeResponse)
+		}
+	}()
+	return responses, nil
+}
+
 func (c *Client) Exec(r Request) error {
 	connection, err := c.Connect()
 	if err != nil {
@@ -116,6 +142,15 @@ func (c *Client) QueryOne(r Request) (*Response, error) {
 	return connection.QueryOne(r)
 }
 
+func (c *Client) QueryMain(r Request) (chan *Response, error) {
+	connection, err := c.Connect()
+	if err != nil {
+		return nil, err
+	}
+	defer connection.Close()
+	return connection.QueryMany(r)
+}
+
 type Response struct {
 	Message string
 }
@@ -131,6 +166,31 @@ func (r *Response) Cmd() (string, string) {
 	}
 	args := strings.TrimSpace(parsed[1])
 	return cmd, args
+}
+
+type Push struct {
+	V string
+}
+
+func (p *Push) String() string {
+	return fmt.Sprintf("%s %s", CmdPush, p.V)
+}
+
+func (r *Response) Ok() (bool, error) {
+	cmd, _ := r.Cmd()
+	if cmd != CmdOK && cmd != CmdRefuse {
+		return false, ErrInvalidResponse
+	}
+
+	return cmd == CmdOK, nil
+}
+
+type Pull struct {
+	N int
+}
+
+func (p *Pull) String() string {
+	return fmt.Sprintf("%s %s", CmdPull, p.N)
 }
 
 type Prepare struct {
