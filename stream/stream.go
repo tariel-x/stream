@@ -37,11 +37,15 @@ func (h *Handler) Pull(request PullRequest, response ServerResponse) error {
 	if err != nil {
 		return err
 	}
+readCycle:
 	for {
 		select {
 		case <-request.ctx.Done():
 			return nil
-		case result := <-results:
+		case result, ok := <-results:
+			if !ok {
+				break readCycle
+			}
 			response.Push(result)
 			time.Sleep(time.Millisecond * 300)
 		}

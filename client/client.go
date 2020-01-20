@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -95,7 +94,7 @@ func (c *Connection) QueryOne(r Request) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Println("this <- ", c.Client.Address, nodeResponse)
+	c.Client.Logger.Println("this <- ", c.Client.Address, nodeResponse)
 	return &Response{Message: nodeResponse}, nil
 }
 
