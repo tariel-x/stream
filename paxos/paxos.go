@@ -14,6 +14,12 @@ var (
 	ErrQuorumFailed = errors.New("quorum failed")
 )
 
+type logger struct{}
+
+func (l *logger) Println(message ...interface{}) {
+	log.Println(message...)
+}
+
 type Paxos struct {
 	*paxos
 	m *sync.Mutex
@@ -61,6 +67,7 @@ func newPaxos(nodes []string) (*paxos, error) {
 	clients := []*client.Client{}
 	for _, node := range nodes {
 		client, err := client.New(node, nil)
+		client.Logger = &logger{}
 		if err != nil {
 			return nil, err
 		}

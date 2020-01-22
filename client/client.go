@@ -29,12 +29,12 @@ var (
 )
 
 type Logger interface {
-	Println(message ...string)
+	Println(message ...interface{})
 }
 
 type NullLogger struct{}
 
-func (nl *NullLogger) Println(message ...string) {}
+func (nl *NullLogger) Println(message ...interface{}) {}
 
 type Client struct {
 	Address string
