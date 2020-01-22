@@ -4,8 +4,10 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"sync/atomic"
 
 	"github.com/satori/go.uuid"
+
 	"github.com/tariel-x/whynot/client"
 	"github.com/tariel-x/whynot/stream"
 )
@@ -61,6 +63,7 @@ type paxos struct {
 	N          int
 	acceptedV  *string
 	acceptedID *string
+	n          uint64
 }
 
 func newPaxos(nodes []string) (*paxos, error) {
@@ -78,17 +81,18 @@ func newPaxos(nodes []string) (*paxos, error) {
 		nodes:     clients,
 		N:         0,
 		minQuorum: minQuorum,
+		n:         0,
 	}, nil
 }
 
 type AcceptMessage struct {
-	n  int
+	n  uint64
 	id string
 	v  string
 }
 
 func (am *AcceptMessage) N() int {
-	return am.n
+	return int(am.n)
 }
 func (am *AcceptMessage) ID() string {
 	return am.id
@@ -109,9 +113,10 @@ func (p *paxos) Commit(v string) (int, error) {
 			return 0, err
 		}
 		// Inc N counter to make the next proposition.
-		p.N = acceptMessage.n + 1
+		atomic.AddUint64(&p.n, acceptMessage.n+1)
+		//p.N = acceptMessage.n + 1
 	}
-	return acceptMessage.n, nil
+	return acceptMessage.N(), nil
 }
 
 func (p *paxos) commit(n int, v, id string) (*AcceptMessage, error) {
@@ -146,6 +151,7 @@ commitCycle:
 	return acceptMessage, p.set(acceptMessage)
 }
 
+//TODO: replace mutex to sync atimic
 //Prepare returns true if proposed N is more than last known N.
 //If some value is accepted but not set, it would be also returned.
 func (p *paxos) Prepare(n int) (bool, *AcceptMessage) {
@@ -153,11 +159,12 @@ func (p *paxos) Prepare(n int) (bool, *AcceptMessage) {
 		var msg *AcceptMessage
 		if p.acceptedV != nil {
 			msg = &AcceptMessage{
-				n:  p.N,
+				n:  atomic.LoadUint64(&p.n),
 				id: *p.acceptedID,
 				v:  *p.acceptedV,
 			}
 		}
+		atomic.StoreUint64(&p.n, uint64(n))
 		p.N = n
 		p.acceptedV = nil
 		p.acceptedID = nil
