@@ -104,10 +104,12 @@ func (t *Toster) Begin(wg *sync.WaitGroup) {
 		response, err := t.client.QueryOne(&client.Push{V: msg})
 		if err != nil {
 			log.Println("error", err)
+			continue
 		}
 		ok, err := response.Ok()
 		if err != nil {
 			log.Println("error", err)
+			continue
 		}
 		if !ok {
 			log.Printf("PUSH %s failed", msg)
