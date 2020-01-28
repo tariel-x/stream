@@ -24,20 +24,16 @@ func (l *logger) Println(message ...interface{}) {
 
 type Paxos struct {
 	*paxos
-	m *sync.Mutex
 }
 
 func NewPaxos(nodes []string) (*Paxos, error) {
 	wnpaxos, err := newPaxos(nodes)
 	return &Paxos{
 		paxos: wnpaxos,
-		m:     &sync.Mutex{},
 	}, err
 }
 
 func (p *Paxos) Prepare(n int) (bool, stream.AcceptMessage) {
-	p.m.Lock()
-	defer p.m.Unlock()
 	accepted, acceptMessage := p.paxos.Prepare(n)
 	if acceptMessage == nil {
 		return accepted, nil
@@ -45,25 +41,12 @@ func (p *Paxos) Prepare(n int) (bool, stream.AcceptMessage) {
 	return accepted, stream.AcceptMessage(acceptMessage)
 }
 
-func (p *Paxos) Accept(n int, v, id string) bool {
-	p.m.Lock()
-	defer p.m.Unlock()
-	return p.paxos.Accept(n, v, id)
-}
-
-func (p *Paxos) Commit(v string) (int, error) {
-	p.m.Lock()
-	defer p.m.Unlock()
-	return p.paxos.Commit(v)
-}
-
 type paxos struct {
 	nodes      []*client.Client
 	minQuorum  int
-	N          int
 	acceptedV  *string
 	acceptedID *string
-	n          uint64
+	n          *uint64
 }
 
 func newPaxos(nodes []string) (*paxos, error) {
@@ -77,12 +60,12 @@ func newPaxos(nodes []string) (*paxos, error) {
 		clients = append(clients, client)
 	}
 	minQuorum := (len(nodes) / 2) + 1
-	return &paxos{
+	p := &paxos{
 		nodes:     clients,
-		N:         0,
 		minQuorum: minQuorum,
-		n:         0,
-	}, nil
+	}
+	atomic.StoreUint64(p.n, 0)
+	return p, nil
 }
 
 type AcceptMessage struct {
@@ -108,18 +91,17 @@ func (p *paxos) Commit(v string) (int, error) {
 	id := uuid.NewV4().String()
 
 	for acceptMessage == nil || (acceptMessage != nil && acceptMessage.id != id) {
-		acceptMessage, err = p.commit(p.N, v, id)
+		acceptMessage, err = p.commit(v, id)
 		if err != nil {
 			return 0, err
 		}
 		// Inc N counter to make the next proposition.
-		atomic.AddUint64(&p.n, acceptMessage.n+1)
-		//p.N = acceptMessage.n + 1
+		atomic.AddUint64(p.n, 1)
 	}
 	return acceptMessage.N(), nil
 }
 
-func (p *paxos) commit(n int, v, id string) (*AcceptMessage, error) {
+func (p *paxos) commit(v, id string) (*AcceptMessage, error) {
 	var acceptMessage *AcceptMessage
 	var err error
 
@@ -127,12 +109,12 @@ commitCycle:
 	for {
 	promisePhase:
 		for {
-			acceptMessage, err = p.prepare(n, v, id)
+			acceptMessage, err = p.prepare(atomic.LoadUint64(p.n), v, id)
 			switch err {
 			case nil:
 				break promisePhase
 			case ErrQuorumFailed:
-				n += 2 //TODO: set max proposed N in quorum + 1
+				atomic.AddUint64(p.n, 2) //TODO: set max proposed N in quorum + 1
 			default:
 				return nil, err
 			}
@@ -143,7 +125,7 @@ commitCycle:
 		case nil:
 			break commitCycle
 		case ErrQuorumFailed:
-			n += 2 //TODO: set max proposed N in quorum + 1
+			atomic.AddUint64(p.n, 2) //TODO: set max proposed N in quorum + 1
 		default:
 			return nil, err
 		}
@@ -151,21 +133,19 @@ commitCycle:
 	return acceptMessage, p.set(acceptMessage)
 }
 
-//TODO: replace mutex to sync atimic
 //Prepare returns true if proposed N is more than last known N.
 //If some value is accepted but not set, it would be also returned.
 func (p *paxos) Prepare(n int) (bool, *AcceptMessage) {
-	if n > p.N {
+	if n > int(atomic.LoadUint64(p.n)) {
 		var msg *AcceptMessage
 		if p.acceptedV != nil {
 			msg = &AcceptMessage{
-				n:  atomic.LoadUint64(&p.n),
+				n:  atomic.LoadUint64(p.n),
 				id: *p.acceptedID,
 				v:  *p.acceptedV,
 			}
 		}
-		atomic.StoreUint64(&p.n, uint64(n))
-		p.N = n
+		atomic.StoreUint64(p.n, uint64(n))
 		p.acceptedV = nil
 		p.acceptedID = nil
 		return true, msg
@@ -174,8 +154,8 @@ func (p *paxos) Prepare(n int) (bool, *AcceptMessage) {
 }
 
 func (p *paxos) Accept(n int, v, id string) bool {
-	if n >= p.N {
-		p.N = n
+	if n >= int(atomic.LoadUint64(p.n)) {
+		atomic.StoreUint64(p.n, uint64(n))
 		p.acceptedV = &v
 		p.acceptedID = &id
 		return true
@@ -183,7 +163,7 @@ func (p *paxos) Accept(n int, v, id string) bool {
 	return false
 }
 
-func (p *paxos) prepare(n int, v, id string) (*AcceptMessage, error) {
+func (p *paxos) prepare(n uint64, v, id string) (*AcceptMessage, error) {
 	wg := &sync.WaitGroup{}
 	promises := make(chan client.Promise, len(p.nodes))
 	for _, node := range p.nodes {
@@ -208,7 +188,7 @@ func (p *paxos) prepare(n int, v, id string) (*AcceptMessage, error) {
 			break
 		}
 		count++
-		if promise.Previous && promise.N < n {
+		if promise.Previous && promise.N < int(n) {
 			if promise.N > maxPrevPromisedN {
 				acceptMessage.v = promise.V
 				acceptMessage.id = promise.ID
@@ -223,10 +203,10 @@ func (p *paxos) prepare(n int, v, id string) (*AcceptMessage, error) {
 	return acceptMessage, nil
 }
 
-func (p *paxos) sendPrepare(nodeClient *client.Client, wg *sync.WaitGroup, promises chan client.Promise, n int) {
+func (p *paxos) sendPrepare(nodeClient *client.Client, wg *sync.WaitGroup, promises chan client.Promise, n uint64) {
 	defer wg.Done()
 
-	response, err := nodeClient.QueryOne(&client.Prepare{N: n})
+	response, err := nodeClient.QueryOne(&client.Prepare{N: int(n)})
 	if err != nil {
 		log.Println(err)
 		return
@@ -269,10 +249,10 @@ func (p *paxos) accept(message *AcceptMessage) error {
 	return nil
 }
 
-func (p *paxos) sendAccept(nodeClient *client.Client, wg *sync.WaitGroup, accepts chan client.Accepted, n int, v, id string) {
+func (p *paxos) sendAccept(nodeClient *client.Client, wg *sync.WaitGroup, accepts chan client.Accepted, n uint64, v, id string) {
 	defer wg.Done()
 	response, err := nodeClient.QueryOne(&client.Accept{
-		N:  n,
+		N:  int(n),
 		V:  v,
 		ID: id,
 	})
@@ -293,7 +273,7 @@ func (p *paxos) sendAccept(nodeClient *client.Client, wg *sync.WaitGroup, accept
 
 func (p *paxos) set(message *AcceptMessage) error {
 	setRequest := &client.Set{
-		N: message.n,
+		N: int(message.n),
 		V: message.v,
 	}
 	for _, node := range p.nodes {
