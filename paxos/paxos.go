@@ -12,6 +12,7 @@ import (
 	"github.com/tariel-x/whynot/stream"
 )
 
+//TODO: set sleep to debug or use debugger
 var (
 	ErrQuorumFailed = errors.New("quorum failed")
 )
@@ -60,9 +61,11 @@ func newPaxos(nodes []string) (*paxos, error) {
 		clients = append(clients, client)
 	}
 	minQuorum := (len(nodes) / 2) + 1
+	startN := uint64(0)
 	p := &paxos{
 		nodes:     clients,
 		minQuorum: minQuorum,
+		n:         &startN,
 	}
 	atomic.StoreUint64(p.n, 0)
 	return p, nil
