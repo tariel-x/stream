@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/tariel-x/whynot/stream"
 )
@@ -49,6 +50,7 @@ func (server *Server) Run(ctx context.Context) error {
 				return
 			}
 			go server.accept(ctx, conn, errc)
+			time.Sleep(time.Second * 2)
 		}
 	}()
 

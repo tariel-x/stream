@@ -12,7 +12,6 @@ import (
 	"github.com/tariel-x/whynot/stream"
 )
 
-//TODO: set sleep to debug or use debugger
 var (
 	ErrQuorumFailed = errors.New("quorum failed")
 )
@@ -93,6 +92,7 @@ func (p *paxos) Commit(v string) (int, error) {
 
 	id := uuid.NewV4().String()
 
+	//TODO: if the foreign value is commited by the origin node - skip value.
 	for acceptMessage == nil || (acceptMessage != nil && acceptMessage.id != id) {
 		acceptMessage, err = p.commit(v, id)
 		if err != nil {

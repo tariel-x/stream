@@ -45,7 +45,7 @@ type Client struct {
 func New(address string, timeout *time.Duration) (*Client, error) {
 	client := &Client{
 		Address: address,
-		Timeout: time.Second * 2,
+		Timeout: time.Second * 10,
 		Logger:  &NullLogger{},
 	}
 	if timeout != nil {
