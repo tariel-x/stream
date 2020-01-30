@@ -49,6 +49,7 @@ type Paxos interface {
 	Commit(string) (int, error)
 	Prepare(n int) (bool, AcceptMessage)
 	Accept(n int, v, id string) bool
+	Set(id string)
 }
 
 type Handler struct {
@@ -118,7 +119,11 @@ func parseRawMessage(message string) (*Request, error) {
 	if len(parsed) == 0 {
 		return nil, ErrIncorrectCmd
 	}
-	cmd, rawArgs := parsed[0], parsed[1]
+
+	cmd, rawArgs := parsed[0], ""
+	if len(parsed) == 2 {
+		rawArgs = parsed[1]
+	}
 
 	if _, ok := availableCmds[cmd]; !ok {
 		return nil, ErrIncorrectCmd
@@ -220,15 +225,16 @@ func NewAcceptRequest(request Request) (*AcceptRequest, error) {
 
 type SetRequest struct {
 	Request
-	n int
-	v string
+	n  int
+	id string
+	v  string
 }
 
 func NewSetRequest(request Request) (*SetRequest, error) {
 	if request.cmd != client.CmdSet {
 		return nil, ErrIncorrectCmd
 	}
-	if len(request.args) == 0 {
+	if len(request.args) != 3 {
 		return nil, ErrIncorrectCmd
 	}
 	n, err := strconv.Atoi(request.args[0])
@@ -238,6 +244,7 @@ func NewSetRequest(request Request) (*SetRequest, error) {
 	return &SetRequest{
 		Request: request,
 		n:       n,
-		v:       request.args[1],
+		id:      request.args[1],
+		v:       request.args[2],
 	}, nil
 }

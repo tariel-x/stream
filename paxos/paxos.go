@@ -47,6 +47,8 @@ type paxos struct {
 	acceptedV  *string
 	acceptedID *string
 	n          *uint64
+	setted     map[string]struct{}
+	settedM    sync.RWMutex
 }
 
 func newPaxos(nodes []string) (*paxos, error) {
@@ -65,6 +67,8 @@ func newPaxos(nodes []string) (*paxos, error) {
 		nodes:     clients,
 		minQuorum: minQuorum,
 		n:         &startN,
+		setted:    map[string]struct{}{},
+		settedM:   sync.RWMutex{},
 	}
 	atomic.StoreUint64(p.n, 0)
 	return p, nil
@@ -84,6 +88,22 @@ func (am *AcceptMessage) ID() string {
 }
 func (am *AcceptMessage) V() string {
 	return am.v
+}
+
+func (p *paxos) Set(id string) {
+	p.settedM.Lock()
+	defer p.settedM.Unlock()
+	p.setted[id] = struct{}{}
+}
+
+func (p *paxos) getSetted(id string) bool {
+	p.settedM.RLock()
+	defer p.settedM.RUnlock()
+	_, ok := p.setted[id]
+	if ok {
+		delete(p.setted, id)
+	}
+	return ok
 }
 
 func (p *paxos) Commit(v string) (int, error) {
@@ -121,6 +141,11 @@ commitCycle:
 			default:
 				return nil, err
 			}
+		}
+
+		// If the returned from the node elder proposed message is already set than skip it.
+		if p.getSetted(acceptMessage.id) {
+			return nil, nil
 		}
 		// Accept phase
 		err = p.accept(acceptMessage)
@@ -276,8 +301,9 @@ func (p *paxos) sendAccept(nodeClient *client.Client, wg *sync.WaitGroup, accept
 
 func (p *paxos) set(message *AcceptMessage) error {
 	setRequest := &client.Set{
-		N: int(message.n),
-		V: message.v,
+		N:  int(message.n),
+		ID: message.id,
+		V:  message.v,
 	}
 	for _, node := range p.nodes {
 		go node.Exec(setRequest)

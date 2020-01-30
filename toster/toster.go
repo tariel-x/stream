@@ -125,7 +125,15 @@ func (t *Toster) Read(wg *sync.WaitGroup) {
 		log.Println("error", err)
 	}
 	t.results = []string{}
-	for response := range responses {
-		t.results = append(t.results, response.Message)
+	for {
+		if err := responses.Err(); err != nil {
+			log.Println("error", err)
+			break
+		}
+		msg := responses.Next()
+		if msg == nil {
+			break
+		}
+		t.results = append(t.results, msg.Message)
 	}
 }

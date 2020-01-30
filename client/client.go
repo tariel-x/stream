@@ -45,7 +45,7 @@ type Client struct {
 func New(address string, timeout *time.Duration) (*Client, error) {
 	client := &Client{
 		Address: address,
-		Timeout: time.Second * 10,
+		Timeout: time.Second * 20,
 		Logger:  &NullLogger{},
 	}
 	if timeout != nil {
@@ -99,25 +99,54 @@ func (c *Connection) QueryOne(r Request) (*Response, error) {
 	return &Response{Message: nodeResponse}, nil
 }
 
-func (c *Connection) QueryMany(r Request) (chan *Response, error) {
+type Responses struct {
+	responses chan *Response
+	errors    chan error
+}
+
+func (r *Responses) Next() *Response {
+	if r.responses == nil {
+		return nil
+	}
+	if response, ok := <-r.responses; ok {
+		return response
+	} else {
+		return nil
+	}
+}
+
+func (r *Responses) Err() error {
+	select {
+	case err := <-r.errors:
+		return err
+	default:
+		return nil
+	}
+}
+
+func (c *Connection) QueryMany(r Request) (*Responses, error) {
 	message := r.String()
 	c.Client.Logger.Println("this -> ", c.Client.Address, message)
 	if _, err := fmt.Fprint(c.connection, message+"\n"); err != nil {
 		return nil, err
 	}
-	responses := make(chan *Response)
+	responses := &Responses{
+		responses: make(chan *Response),
+		errors:    make(chan error),
+	}
 	go func() {
-		defer close(responses)
+		defer close(responses.responses)
+		defer close(responses.errors)
 		for {
 			nodeResponse, err := bufio.NewReader(c.connection).ReadString('\n')
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				c.Client.Logger.Println("error", err.Error())
+				responses.errors <- err
 				continue
 			}
-			responses <- &Response{Message: nodeResponse}
+			responses.responses <- &Response{Message: nodeResponse}
 			c.Client.Logger.Println("this <- ", c.Client.Address, nodeResponse)
 		}
 	}()
@@ -142,7 +171,7 @@ func (c *Client) QueryOne(r Request) (*Response, error) {
 	return connection.QueryOne(r)
 }
 
-func (c *Client) QueryMain(r Request) (chan *Response, error) {
+func (c *Client) QueryMain(r Request) (*Responses, error) {
 	connection, err := c.Connect()
 	if err != nil {
 		return nil, err
@@ -190,7 +219,7 @@ type Pull struct {
 }
 
 func (p *Pull) String() string {
-	return fmt.Sprintf("%s %s", CmdPull, p.N)
+	return fmt.Sprintf("%s %d", CmdPull, p.N)
 }
 
 type Prepare struct {
@@ -261,10 +290,11 @@ func (r *Response) Accepted() (*Accepted, error) {
 }
 
 type Set struct {
-	N int
-	V string
+	N  int
+	ID string
+	V  string
 }
 
 func (s *Set) String() string {
-	return fmt.Sprintf("%s %d %s", CmdSet, s.N, s.V)
+	return fmt.Sprintf("%s %d %s %s", CmdSet, s.N, s.ID, s.V)
 }

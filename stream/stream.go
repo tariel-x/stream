@@ -23,6 +23,7 @@ func (h *Handler) Set(request *SetRequest, response ServerResponse) error {
 	if err := h.log.Set(request.ctx, request.n, request.v); err != nil {
 		return err
 	}
+	h.paxos.Set(request.id)
 	response.Push(client.CmdOK)
 	return nil
 }

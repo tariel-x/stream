@@ -3,7 +3,6 @@ package log
 import (
 	"context"
 	"errors"
-	"strconv"
 	"sync"
 )
 
@@ -18,16 +17,8 @@ type Log struct {
 }
 
 func NewLog() (*Log, error) {
-	dumnMessages := []item{}
-	for i := 0; i < 10; i++ {
-		dumnMessages = append(dumnMessages, item{
-			n: i,
-			v: strconv.Itoa(i),
-		})
-	}
-
 	return &Log{
-		log: dumnMessages,
+		log: []item{},
 		m:   &sync.RWMutex{},
 	}, nil
 }
