@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"io"
 	"log"
 	"net"
 	"strings"
@@ -65,6 +66,7 @@ func (server *Server) Run(ctx context.Context) error {
 type Request struct {
 	message string
 	address string
+	name    string
 }
 
 func (r *Request) Message() string {
@@ -75,10 +77,24 @@ func (r *Request) Address() string {
 	return r.address
 }
 
-func makeRequest(input, address string) (*Request, error) {
+func (r *Request) SetName(name string) {
+	r.name = name
+}
+
+func (r *Request) Name() string {
+	if r.name != "" {
+		return r.name
+	}
+	return r.address
+}
+
+func (r *Request) setInput(input string) {
 	message := strings.TrimSpace(input)
+	r.message = message
+}
+
+func makeRequest(address string) (*Request, error) {
 	return &Request{
-		message: message,
 		address: address,
 	}, nil
 }
@@ -106,16 +122,7 @@ func (server *Server) accept(parent context.Context, conn net.Conn, errc chan er
 	}
 	defer closeListen()
 
-	input, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil {
-		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
-			errc <- err
-			return
-		}
-		errc <- err
-		return
-	}
-	request, err := makeRequest(input, conn.RemoteAddr().String())
+	request, err := makeRequest(conn.RemoteAddr().String())
 	if err != nil {
 		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
 			errc <- err
@@ -123,20 +130,39 @@ func (server *Server) accept(parent context.Context, conn net.Conn, errc chan er
 		}
 		return
 	}
-	log.Printf("this <- %s %s\n", request.Address(), request.Message())
+
 	response := NewResponse()
 	go func() {
 		defer close(response.messages)
-		if err = server.handler.Process(ctx, request, response); err != nil {
-			if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
+		for {
+			input, err := bufio.NewReader(conn).ReadString('\n')
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
+					errc <- err
+					return
+				}
 				errc <- err
 				return
 			}
-			return
+			request.setInput(input)
+
+			log.Printf("this <- %s %s\n", request.Name(), request.Message())
+
+			if err = server.handler.Process(ctx, request, response); err != nil {
+				if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
+					errc <- err
+					return
+				}
+				return
+			}
 		}
+
 	}()
 	for message := range response.messages {
-		log.Printf("this -> %s %s", request.Address(), message)
+		log.Printf("this -> %s %s", request.Name(), message)
 		if _, err := conn.Write([]byte(message + "\n")); err != nil {
 			errc <- err
 			return

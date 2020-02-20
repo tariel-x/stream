@@ -22,6 +22,7 @@ const (
 	CmdAccepted = "ACCEPTED"
 	CmdSet      = "SET"
 	CmdOK       = "OK"
+	CmdHello    = "HELLO"
 )
 
 var (
@@ -40,6 +41,7 @@ type Client struct {
 	Address string
 	Timeout time.Duration
 	Logger  Logger
+	Name    string
 }
 
 func New(address string, timeout *time.Duration) (*Client, error) {
@@ -64,10 +66,16 @@ func (c *Client) Connect() (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Connection{
+	connection := &Connection{
 		Client:     c,
 		connection: conn,
-	}, nil
+	}
+	if c.Name != "" {
+		if err := connection.Exec(&Hello{Name: c.Name}); err != nil {
+			return nil, err
+		}
+	}
+	return connection, nil
 }
 
 func (c *Connection) Close() error {
@@ -297,4 +305,12 @@ type Set struct {
 
 func (s *Set) String() string {
 	return fmt.Sprintf("%s %d %s %s", CmdSet, s.N, s.ID, s.V)
+}
+
+type Hello struct {
+	Name string
+}
+
+func (h *Hello) String() string {
+	return fmt.Sprintf("%s %s", CmdHello, h.Name)
 }

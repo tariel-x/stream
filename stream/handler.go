@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -22,12 +23,14 @@ var (
 		client.CmdPrepare: {},
 		client.CmdAccept:  {},
 		client.CmdSet:     {},
+		client.CmdHello:   {},
 	}
 )
 
 type ServerRequest interface {
 	Message() string
 	Address() string
+	SetName(string)
 }
 
 type ServerResponse interface {
@@ -109,6 +112,13 @@ func (h *Handler) Process(ctx context.Context, message ServerRequest, response S
 			return err
 		}
 		return h.Accept(request, response)
+	case client.CmdHello:
+		request, err := NewHelloRequest(*parsed)
+		if err != nil {
+			return err
+		}
+		message.SetName(request.name)
+		return nil
 	default:
 		return ErrUnknownCmd
 	}
@@ -246,5 +256,24 @@ func NewSetRequest(request Request) (*SetRequest, error) {
 		n:       n,
 		id:      request.args[1],
 		v:       request.args[2],
+	}, nil
+}
+
+type HelloRequest struct {
+	Request
+	name string
+}
+
+func NewHelloRequest(request Request) (*HelloRequest, error) {
+	if request.cmd != client.CmdHello {
+		return nil, ErrIncorrectCmd
+	}
+	fmt.Println(request.args)
+	if len(request.args) == 0 {
+		return nil, ErrIncorrectCmd
+	}
+	return &HelloRequest{
+		Request: request,
+		name:    request.args[0],
 	}, nil
 }
