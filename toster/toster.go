@@ -120,6 +120,7 @@ func (t *Toster) Begin(wg *sync.WaitGroup) {
 func (t *Toster) Read(wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	log.Printf("PULL 0 from %s", t.node)
 	responses, err := t.client.QueryMain(&client.Pull{N: 0})
 	if err != nil {
 		log.Println("error", err)
@@ -131,6 +132,7 @@ func (t *Toster) Read(wg *sync.WaitGroup) {
 			break
 		}
 		msg := responses.Next()
+		log.Printf("readed %s from %s\n", msg.Message, t.node)
 		if msg == nil {
 			break
 		}
