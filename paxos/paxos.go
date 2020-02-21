@@ -26,8 +26,8 @@ type Paxos struct {
 	*paxos
 }
 
-func NewPaxos(nodes []string) (*Paxos, error) {
-	wnpaxos, err := newPaxos(nodes)
+func NewPaxos(nodes []string, name string) (*Paxos, error) {
+	wnpaxos, err := newPaxos(nodes, name)
 	return &Paxos{
 		paxos: wnpaxos,
 	}, err
@@ -51,10 +51,11 @@ type paxos struct {
 	settedM    sync.RWMutex
 }
 
-func newPaxos(nodes []string) (*paxos, error) {
+func newPaxos(nodes []string, name string) (*paxos, error) {
 	clients := []*client.Client{}
 	for _, node := range nodes {
 		client, err := client.New(node, nil)
+		client.SetName(name)
 		client.Logger = &logger{}
 		if err != nil {
 			return nil, err

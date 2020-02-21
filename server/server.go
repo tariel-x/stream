@@ -3,10 +3,12 @@ package server
 import (
 	"bufio"
 	"context"
+	"errors"
 	"log"
 	"net"
 	"strings"
 
+	"github.com/tariel-x/whynot/client"
 	"github.com/tariel-x/whynot/stream"
 )
 
@@ -65,6 +67,7 @@ func (server *Server) Run(ctx context.Context) error {
 type Request struct {
 	message string
 	address string
+	name    string
 }
 
 func (r *Request) Message() string {
@@ -72,6 +75,13 @@ func (r *Request) Message() string {
 }
 
 func (r *Request) Address() string {
+	return r.address
+}
+
+func (r *Request) Name() string {
+	if r.name != "" {
+		return r.name
+	}
 	return r.address
 }
 
@@ -106,7 +116,17 @@ func (server *Server) accept(parent context.Context, conn net.Conn, errc chan er
 	}
 	defer closeListen()
 
-	input, err := bufio.NewReader(conn).ReadString('\n')
+	rawinput, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
+			errc <- err
+			return
+		}
+		errc <- err
+		return
+	}
+
+	input, meta, err := server.extractMeta(rawinput)
 	if err != nil {
 		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
 			errc <- err
@@ -116,6 +136,10 @@ func (server *Server) accept(parent context.Context, conn net.Conn, errc chan er
 		return
 	}
 	request, err := makeRequest(input, conn.RemoteAddr().String())
+	if name, ok := meta[client.MetaKeyName]; ok {
+		request.name = name
+	}
+
 	if err != nil {
 		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
 			errc <- err
@@ -142,4 +166,18 @@ func (server *Server) accept(parent context.Context, conn net.Conn, errc chan er
 			return
 		}
 	}
+}
+
+func (server *Server) extractMeta(rawinput string) (string, map[string]string, error) {
+	inputparts := strings.Split(rawinput, ";")
+	input := inputparts[0]
+	meta := map[string]string{}
+	for i := 1; i < len(inputparts); i++ {
+		metaparts := strings.Split(inputparts[i], "=")
+		if len(metaparts) != 2 {
+			return "", nil, errors.New("invalid meta")
+		}
+		meta[metaparts[0]] = metaparts[1]
+	}
+	return input, meta, nil
 }

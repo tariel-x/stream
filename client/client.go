@@ -24,6 +24,10 @@ const (
 	CmdOK       = "OK"
 )
 
+const (
+	MetaKeyName = "name"
+)
+
 var (
 	ErrInvalidResponse = errors.New("invalid response")
 )
@@ -40,6 +44,11 @@ type Client struct {
 	Address string
 	Timeout time.Duration
 	Logger  Logger
+	Meta    map[string]string
+}
+
+func (c *Client) SetName(name string) {
+	c.Meta[MetaKeyName] = name
 }
 
 func New(address string, timeout *time.Duration) (*Client, error) {
@@ -47,6 +56,7 @@ func New(address string, timeout *time.Duration) (*Client, error) {
 		Address: address,
 		Timeout: time.Second * 20,
 		Logger:  &NullLogger{},
+		Meta:    map[string]string{},
 	}
 	if timeout != nil {
 		client.Timeout = *timeout
@@ -78,17 +88,27 @@ type Request interface {
 	String() string
 }
 
+func (c *Connection) write(message string) error {
+	msgparts := make([]string, 0, len(c.Client.Meta)+1)
+	msgparts[0] = message
+	for key, value := range c.Client.Meta {
+		msgparts = append(msgparts, fmt.Sprintf("%s=%s", key, value))
+	}
+	_, err := fmt.Fprint(c.connection, strings.Join(msgparts, ";")+"\n")
+	return err
+}
+
 func (c *Connection) Exec(r Request) error {
 	message := r.String()
 	c.Client.Logger.Println("this -> ", c.Client.Address, message)
-	_, err := fmt.Fprint(c.connection, message+"\n")
+	err := c.write(message)
 	return err
 }
 
 func (c *Connection) QueryOne(r Request) (*Response, error) {
 	message := r.String()
 	c.Client.Logger.Println("this -> ", c.Client.Address, message)
-	if _, err := fmt.Fprint(c.connection, message+"\n"); err != nil {
+	if err := c.write(message); err != nil {
 		return nil, err
 	}
 	nodeResponse, err := bufio.NewReader(c.connection).ReadString('\n')
@@ -127,7 +147,7 @@ func (r *Responses) Err() error {
 func (c *Connection) QueryMany(r Request) (*Responses, error) {
 	message := r.String()
 	c.Client.Logger.Println("this -> ", c.Client.Address, message)
-	if _, err := fmt.Fprint(c.connection, message+"\n"); err != nil {
+	if err := c.write(message); err != nil {
 		return nil, err
 	}
 	responses := &Responses{
