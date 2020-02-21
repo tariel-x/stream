@@ -90,7 +90,7 @@ type Request interface {
 
 func (c *Connection) write(message string) error {
 	msgparts := make([]string, 0, len(c.Client.Meta)+1)
-	msgparts[0] = message
+	msgparts = append(msgparts, message)
 	for key, value := range c.Client.Meta {
 		msgparts = append(msgparts, fmt.Sprintf("%s=%s", key, value))
 	}

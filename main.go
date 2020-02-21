@@ -83,7 +83,7 @@ func Run(c *cli.Context) error {
 		}
 	}
 
-	pxs, err := paxos.NewPaxos(nodes)
+	pxs, err := paxos.NewPaxos(nodes, listenAddress)
 	if err != nil {
 		return err
 	}
