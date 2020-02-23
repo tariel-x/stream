@@ -1,6 +1,7 @@
 package paxos
 
 import (
+	"crypto/rand"
 	"errors"
 	"log"
 	"sync"
@@ -14,12 +15,13 @@ import (
 
 var (
 	ErrQuorumFailed = errors.New("quorum failed")
+	ErrAlreadySet   = errors.New("already set by another node")
 )
 
 type logger struct{}
 
 func (l *logger) Println(message ...interface{}) {
-	log.Println(message...)
+	//log.Println(message...)
 }
 
 type Paxos struct {
@@ -46,6 +48,7 @@ type paxos struct {
 	minQuorum  int
 	acceptedV  *string
 	acceptedID *string
+	acceptedM  sync.RWMutex
 	n          *uint64
 	setted     map[string]struct{}
 	settedM    sync.RWMutex
@@ -56,7 +59,7 @@ func newPaxos(nodes []string, name string) (*paxos, error) {
 	for _, node := range nodes {
 		client, err := client.New(node, nil)
 		client.SetName(name)
-		client.Logger = &logger{}
+		//client.Logger = &logger{}
 		if err != nil {
 			return nil, err
 		}
@@ -70,8 +73,9 @@ func newPaxos(nodes []string, name string) (*paxos, error) {
 		n:         &startN,
 		setted:    map[string]struct{}{},
 		settedM:   sync.RWMutex{},
+		acceptedM: sync.RWMutex{},
 	}
-	atomic.StoreUint64(p.n, 0)
+	atomic.StoreUint64(p.n, p.randInc())
 	return p, nil
 }
 
@@ -101,13 +105,11 @@ func (p *paxos) getSetted(id string) bool {
 	p.settedM.RLock()
 	defer p.settedM.RUnlock()
 	_, ok := p.setted[id]
-	if ok {
-		delete(p.setted, id)
-	}
 	return ok
 }
 
-func (p *paxos) Commit(v string) (int, error) {
+func (p *paxos) Commit(v string) ([]stream.AcceptMessage, error) {
+	var acceptedMessages []stream.AcceptMessage
 	var acceptMessage *AcceptMessage
 	var err error
 
@@ -116,18 +118,39 @@ func (p *paxos) Commit(v string) (int, error) {
 	//TODO: if the foreign value is commited by the origin node - skip value.
 	for acceptMessage == nil || (acceptMessage != nil && acceptMessage.id != id) {
 		acceptMessage, err = p.commit(v, id)
-		if err != nil {
-			return 0, err
+		// If the initial value has already set then just return (-1, nil)
+		// If the foreign value has already set then just skip and return to the origin value.
+		if err == ErrAlreadySet && acceptMessage != nil {
+			if acceptMessage.id == id {
+				return acceptedMessages, nil
+			}
+			continue
+		}
+		if err != nil && err != ErrAlreadySet {
+			return nil, err
 		}
 		// Inc N counter to make the next proposition.
 		atomic.AddUint64(p.n, 1)
+		// Add accepted value to the list of values to set.
+		acceptedMessages = append(acceptedMessages, stream.AcceptMessage(acceptMessage))
 	}
-	return acceptMessage.N(), nil
+	return acceptedMessages, nil
+}
+
+func (p *paxos) randInc() uint64 {
+	b := make([]byte, 1)
+	if _, err := rand.Read(b); err != nil {
+		return 2
+	}
+	return uint64(b[0]) + 2
 }
 
 func (p *paxos) commit(v, id string) (*AcceptMessage, error) {
 	var acceptMessage *AcceptMessage
 	var err error
+
+	qid := p.randInc()
+	log.Printf("commit thread %d id %s %s", qid, id, v)
 
 commitCycle:
 	for {
@@ -138,27 +161,41 @@ commitCycle:
 			case nil:
 				break promisePhase
 			case ErrQuorumFailed:
-				atomic.AddUint64(p.n, 2) //TODO: set max proposed N in quorum + 1
+				log.Printf("prepare quorum failed thread %d id %s %s, N=%d", qid, id, v, atomic.LoadUint64(p.n))
+				atomic.AddUint64(p.n, p.randInc()) //TODO: set max proposed N in quorum + 1
 			default:
 				return nil, err
 			}
 		}
-
+		if acceptMessage.id != id {
+			log.Printf("changed value from %s to %s thread %d", v, acceptMessage.v, qid)
+		}
+		v, id = acceptMessage.v, acceptMessage.id
 		// If the returned from the node elder proposed message is already set than skip it.
 		if p.getSetted(acceptMessage.id) {
-			return nil, nil
+			log.Printf("value have already setted thread %d id %s %s", qid, id, v)
+			return acceptMessage, ErrAlreadySet
 		}
+		log.Printf("prepared thread %d id %s %s, N=%d", qid, id, v, atomic.LoadUint64(p.n))
 		// Accept phase
 		err = p.accept(acceptMessage)
 		switch err {
 		case nil:
 			break commitCycle
 		case ErrQuorumFailed:
-			atomic.AddUint64(p.n, 2) //TODO: set max proposed N in quorum + 1
+			log.Printf("accept quorum failed thread %d id %s %s, N=%d", qid, id, v, atomic.LoadUint64(p.n))
+			atomic.AddUint64(p.n, p.randInc()) //TODO: set max proposed N in quorum + 1
 		default:
 			return nil, err
 		}
 	}
+	// If the returned from the node elder proposed message is already set than skip it.
+	if p.getSetted(acceptMessage.id) {
+		log.Printf("value have already setted thread %d id %s %s", qid, id, v)
+		return acceptMessage, ErrAlreadySet
+	}
+	log.Printf("set thread %d id %s %s", qid, id, v)
+	p.Set(id)
 	return acceptMessage, p.set(acceptMessage)
 }
 
@@ -167,6 +204,8 @@ commitCycle:
 func (p *paxos) Prepare(n int) (bool, *AcceptMessage) {
 	if n > int(atomic.LoadUint64(p.n)) {
 		var msg *AcceptMessage
+		p.acceptedM.Lock()
+		defer p.acceptedM.Unlock()
 		if p.acceptedV != nil {
 			msg = &AcceptMessage{
 				n:  atomic.LoadUint64(p.n),
@@ -184,10 +223,13 @@ func (p *paxos) Prepare(n int) (bool, *AcceptMessage) {
 
 func (p *paxos) Accept(n int, v, id string) bool {
 	if n >= int(atomic.LoadUint64(p.n)) {
+		p.acceptedM.Lock()
+		defer p.acceptedM.Unlock()
 		atomic.StoreUint64(p.n, uint64(n))
 		p.acceptedV = &v
 		p.acceptedID = &id
 		return true
+
 	}
 	return false
 }

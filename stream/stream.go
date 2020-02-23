@@ -2,28 +2,32 @@ package stream
 
 import (
 	"fmt"
-	"time"
+	"log"
 
 	"github.com/tariel-x/whynot/client"
 )
 
 func (h *Handler) Push(request *PushRequest, response ServerResponse) error {
-	n, err := h.paxos.Commit(request.v)
+	acceptedMessages, err := h.paxos.Commit(request.v)
 	if err != nil {
 		return err
 	}
-	if err := h.log.Set(request.ctx, n, request.v); err != nil {
-		return err
+	for _, acceptedMessage := range acceptedMessages {
+		log.Printf("add value from push %s", acceptedMessage.V())
+		if err := h.log.Set(request.ctx, acceptedMessage.N(), acceptedMessage.V()); err != nil {
+			return err
+		}
 	}
 	response.Push(client.CmdOK)
 	return nil
 }
 
 func (h *Handler) Set(request *SetRequest, response ServerResponse) error {
+	h.paxos.Set(request.id)
+	log.Printf("add value from set %s", request.v)
 	if err := h.log.Set(request.ctx, request.n, request.v); err != nil {
 		return err
 	}
-	h.paxos.Set(request.id)
 	response.Push(client.CmdOK)
 	return nil
 }
@@ -48,7 +52,6 @@ readCycle:
 				break readCycle
 			}
 			response.Push(result)
-			time.Sleep(time.Millisecond * 300)
 		}
 	}
 	return nil

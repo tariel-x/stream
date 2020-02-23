@@ -20,6 +20,8 @@ import (
 var backgroundContext context.Context
 
 func main() {
+	log.SetOutput(os.Stdout)
+
 	app := cli.NewApp()
 	app.Name = "Στρεαμ"
 	app.Version = "0.1"

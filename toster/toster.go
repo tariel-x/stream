@@ -72,7 +72,7 @@ func Run(c *cli.Context) error {
 	wg.Wait()
 
 	for _, tost := range tosts {
-		fmt.Println(tost.results)
+		log.Println(tost.results)
 	}
 	return nil
 }
@@ -121,21 +121,13 @@ func (t *Toster) Read(wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	log.Printf("PULL 0 from %s", t.node)
-	responses, err := t.client.QueryMain(&client.Pull{N: 0})
+	responses, err := t.client.QueryMany(&client.Pull{N: 0})
 	if err != nil {
 		log.Println("error", err)
 	}
 	t.results = []string{}
-	for {
-		if err := responses.Err(); err != nil {
-			log.Println("error", err)
-			break
-		}
-		msg := responses.Next()
-		log.Printf("readed %s from %s\n", msg.Message, t.node)
-		if msg == nil {
-			break
-		}
-		t.results = append(t.results, msg.Message)
+	for _, response := range responses {
+		//log.Printf("readed %s from %s\n", response.Message, t.node)
+		t.results = append(t.results, response.Message)
 	}
 }

@@ -191,13 +191,29 @@ func (c *Client) QueryOne(r Request) (*Response, error) {
 	return connection.QueryOne(r)
 }
 
-func (c *Client) QueryMain(r Request) (*Responses, error) {
+func (c *Client) QueryMany(r Request) ([]*Response, error) {
 	connection, err := c.Connect()
 	if err != nil {
 		return nil, err
 	}
 	defer connection.Close()
-	return connection.QueryMany(r)
+	responses := []*Response{}
+	responsesc, err := connection.QueryMany(r)
+	if err != nil {
+		return nil, err
+	}
+
+	for {
+		if err := responsesc.Err(); err != nil {
+			return nil, err
+		}
+		response := responsesc.Next()
+		if response == nil {
+			break
+		}
+		responses = append(responses, response)
+	}
+	return responses, nil
 }
 
 type Response struct {

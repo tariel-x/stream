@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"errors"
+	"log"
 	"strconv"
 	"strings"
 
@@ -28,6 +29,7 @@ var (
 type ServerRequest interface {
 	Message() string
 	Address() string
+	Name() string
 }
 
 type ServerResponse interface {
@@ -46,7 +48,7 @@ type AcceptMessage interface {
 }
 
 type Paxos interface {
-	Commit(string) (int, error)
+	Commit(string) ([]AcceptMessage, error)
 	Prepare(n int) (bool, AcceptMessage)
 	Accept(n int, v, id string) bool
 	Set(id string)
@@ -96,6 +98,7 @@ func (h *Handler) Process(ctx context.Context, message ServerRequest, response S
 		if err != nil {
 			return err
 		}
+		log.Printf("SET %s from %s", request.v, message.Name())
 		return h.Set(request, response)
 	case client.CmdPrepare:
 		request, err := NewPrepareRequest(*parsed)
