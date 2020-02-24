@@ -127,7 +127,6 @@ func (t *Toster) Read(wg *sync.WaitGroup) {
 	}
 	t.results = []string{}
 	for _, response := range responses {
-		//log.Printf("readed %s from %s\n", response.Message, t.node)
 		t.results = append(t.results, response.Message)
 	}
 }

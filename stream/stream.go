@@ -2,7 +2,6 @@ package stream
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/tariel-x/whynot/client"
 )
@@ -13,7 +12,6 @@ func (h *Handler) Push(request *PushRequest, response ServerResponse) error {
 		return err
 	}
 	for _, acceptedMessage := range acceptedMessages {
-		log.Printf("add value from push %s", acceptedMessage.V())
 		if err := h.log.Set(request.ctx, acceptedMessage.N(), acceptedMessage.V()); err != nil {
 			return err
 		}
@@ -24,7 +22,6 @@ func (h *Handler) Push(request *PushRequest, response ServerResponse) error {
 
 func (h *Handler) Set(request *SetRequest, response ServerResponse) error {
 	h.paxos.Set(request.id)
-	log.Printf("add value from set %s", request.v)
 	if err := h.log.Set(request.ctx, request.n, request.v); err != nil {
 		return err
 	}

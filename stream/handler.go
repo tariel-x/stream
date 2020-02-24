@@ -3,7 +3,6 @@ package stream
 import (
 	"context"
 	"errors"
-	"log"
 	"strconv"
 	"strings"
 
@@ -106,7 +105,6 @@ func (h *Handler) Process(ctx context.Context, message ServerRequest, response S
 		if err != nil {
 			return err
 		}
-		log.Printf("SET %s from %s", request.v, message.Name())
 		return h.Set(request, response)
 	case client.CmdPrepare:
 		request, err := NewPrepareRequest(*parsed)

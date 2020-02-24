@@ -21,7 +21,7 @@ var (
 type logger struct{}
 
 func (l *logger) Println(message ...interface{}) {
-	//log.Println(message...)
+	log.Println(message...)
 }
 
 type Paxos struct {
@@ -59,7 +59,7 @@ func newPaxos(nodes []string, name string) (*paxos, error) {
 	for _, node := range nodes {
 		client, err := client.New(node, nil)
 		client.SetName(name)
-		//client.Logger = &logger{}
+		client.Logger = &logger{}
 		if err != nil {
 			return nil, err
 		}
@@ -149,8 +149,6 @@ func (p *paxos) commit(v, id string) (*AcceptMessage, error) {
 	var acceptMessage *AcceptMessage
 	var err error
 
-	qid := p.randInc()
-
 commitCycle:
 	for {
 	promisePhase:
@@ -165,23 +163,18 @@ commitCycle:
 				return nil, err
 			}
 		}
-		if acceptMessage.id != id {
-			log.Printf("changed value from %s to %s thread %d", v, acceptMessage.v, qid)
-		}
+
 		v, id = acceptMessage.v, acceptMessage.id
 		// If the returned from the node elder proposed message is already set than skip it.
 		if p.getSetted(acceptMessage.id) {
-			log.Printf("value have already setted thread %d id %s %s", qid, id, v)
 			return acceptMessage, ErrAlreadySet
 		}
-		log.Printf("prepared thread %d id %s %s, N=%d", qid, id, v, atomic.LoadUint64(p.n))
 		// Accept phase
 		err = p.accept(acceptMessage)
 		switch err {
 		case nil:
 			break commitCycle
 		case ErrQuorumFailed:
-			log.Printf("accept quorum failed thread %d id %s %s, N=%d", qid, id, v, atomic.LoadUint64(p.n))
 			atomic.AddUint64(p.n, p.randInc()) //TODO: set max proposed N in quorum + 1
 		default:
 			return nil, err
@@ -189,10 +182,8 @@ commitCycle:
 	}
 	// If the returned from the node elder proposed message is already set than skip it.
 	if p.getSetted(acceptMessage.id) {
-		log.Printf("value have already setted thread %d id %s %s", qid, id, v)
 		return acceptMessage, ErrAlreadySet
 	}
-	log.Printf("set thread %d id %s %s", qid, id, v)
 	p.Set(id)
 	return acceptMessage, p.set(acceptMessage)
 }
