@@ -17,9 +17,9 @@ import (
 func main() {
 
 	app := cli.NewApp()
-	app.Name = "Στρεαμ"
+	app.Name = "Στρεαμ test"
 	app.Version = "0.1"
-	app.Usage = "Στρεαμ"
+	app.Usage = "Στρεαμ test"
 
 	app.Commands = []cli.Command{
 		{
