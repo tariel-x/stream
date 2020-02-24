@@ -2,24 +2,26 @@ package stream
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/tariel-x/whynot/client"
 )
 
 func (h *Handler) Push(request *PushRequest, response ServerResponse) error {
-	n, err := h.paxos.Commit(request.v)
+	acceptedMessages, err := h.paxos.Commit(request.v)
 	if err != nil {
 		return err
 	}
-	if err := h.log.Set(request.ctx, n, request.v); err != nil {
-		return err
+	for _, acceptedMessage := range acceptedMessages {
+		if err := h.log.Set(request.ctx, acceptedMessage.N(), acceptedMessage.V()); err != nil {
+			return err
+		}
 	}
 	response.Push(client.CmdOK)
 	return nil
 }
 
 func (h *Handler) Set(request *SetRequest, response ServerResponse) error {
+	h.paxos.Set(request.id)
 	if err := h.log.Set(request.ctx, request.n, request.v); err != nil {
 		return err
 	}
@@ -29,6 +31,17 @@ func (h *Handler) Set(request *SetRequest, response ServerResponse) error {
 
 func (h *Handler) Status(response ServerResponse) error {
 	response.Push(client.CmdOK)
+	return nil
+}
+
+func (h *Handler) Get(request GetRequest, response ServerResponse) error {
+	results, err := h.log.Get(request.ctx, request.n)
+	if err != nil {
+		return err
+	}
+	for _, result := range results {
+		response.Push(result)
+	}
 	return nil
 }
 
@@ -47,7 +60,6 @@ readCycle:
 				break readCycle
 			}
 			response.Push(result)
-			time.Sleep(time.Millisecond * 300)
 		}
 	}
 	return nil

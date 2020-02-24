@@ -3,10 +3,12 @@ package server
 import (
 	"bufio"
 	"context"
+	"errors"
 	"log"
 	"net"
 	"strings"
 
+	"github.com/tariel-x/whynot/client"
 	"github.com/tariel-x/whynot/stream"
 )
 
@@ -49,6 +51,7 @@ func (server *Server) Run(ctx context.Context) error {
 				return
 			}
 			go server.accept(ctx, conn, errc)
+			//time.Sleep(time.Second)
 		}
 	}()
 
@@ -64,6 +67,7 @@ func (server *Server) Run(ctx context.Context) error {
 type Request struct {
 	message string
 	address string
+	name    string
 }
 
 func (r *Request) Message() string {
@@ -71,6 +75,13 @@ func (r *Request) Message() string {
 }
 
 func (r *Request) Address() string {
+	return r.address
+}
+
+func (r *Request) Name() string {
+	if r.name != "" {
+		return r.name
+	}
 	return r.address
 }
 
@@ -95,7 +106,8 @@ func (r *Response) Push(message string) {
 }
 
 func (server *Server) accept(parent context.Context, conn net.Conn, errc chan error) {
-	ctx, _ := context.WithCancel(parent)
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
 
 	closeListen := func() {
 		if err := conn.Close(); err != nil {
@@ -105,7 +117,17 @@ func (server *Server) accept(parent context.Context, conn net.Conn, errc chan er
 	}
 	defer closeListen()
 
-	input, err := bufio.NewReader(conn).ReadString('\n')
+	rawinput, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
+			errc <- err
+			return
+		}
+		errc <- err
+		return
+	}
+
+	input, meta, err := server.extractMeta(rawinput)
 	if err != nil {
 		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
 			errc <- err
@@ -117,28 +139,46 @@ func (server *Server) accept(parent context.Context, conn net.Conn, errc chan er
 	request, err := makeRequest(input, conn.RemoteAddr().String())
 	if err != nil {
 		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
-			errc <- err
+			log.Printf("error parsing query from %s: %s", conn.RemoteAddr().String(), err)
 			return
 		}
 		return
 	}
-	log.Printf("this <- %s %s\n", request.Address(), request.Message())
+	if name, ok := meta[client.MetaKeyName]; ok {
+		request.name = name
+	}
+
+	log.Printf("this <- %s %s\n", request.Name(), request.Message())
 	response := NewResponse()
 	go func() {
 		defer close(response.messages)
 		if err = server.handler.Process(ctx, request, response); err != nil {
 			if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
-				errc <- err
+				log.Println("error executing query", err)
 				return
 			}
 			return
 		}
 	}()
 	for message := range response.messages {
-		log.Printf("this -> %s %s", request.Address(), message)
+		log.Printf("this -> %s %s", request.Name(), message)
 		if _, err := conn.Write([]byte(message + "\n")); err != nil {
-			errc <- err
+			log.Println("error writing to client", err)
 			return
 		}
 	}
+}
+
+func (server *Server) extractMeta(rawinput string) (string, map[string]string, error) {
+	inputparts := strings.Split(rawinput, ";")
+	input := inputparts[0]
+	meta := map[string]string{}
+	for i := 1; i < len(inputparts); i++ {
+		metaparts := strings.Split(inputparts[i], "=")
+		if len(metaparts) != 2 {
+			return "", nil, errors.New("invalid meta")
+		}
+		meta[metaparts[0]] = metaparts[1]
+	}
+	return input, meta, nil
 }

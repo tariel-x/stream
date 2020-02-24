@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 const (
 	CmdPush     = "PUSH"
 	CmdPull     = "PULL"
+	CmdGet      = "GET"
 	CmdStatus   = "STATUS"
 	CmdPrepare  = "PREPARE"
 	CmdPromise  = "PROMISE"
@@ -23,29 +25,39 @@ const (
 	CmdOK       = "OK"
 )
 
+const (
+	MetaKeyName = "name"
+)
+
 var (
 	ErrInvalidResponse = errors.New("invalid response")
 )
 
 type Logger interface {
-	Println(message ...string)
+	Println(message ...interface{})
 }
 
 type NullLogger struct{}
 
-func (nl *NullLogger) Println(message ...string) {}
+func (nl *NullLogger) Println(message ...interface{}) {}
 
 type Client struct {
 	Address string
 	Timeout time.Duration
 	Logger  Logger
+	Meta    map[string]string
+}
+
+func (c *Client) SetName(name string) {
+	c.Meta[MetaKeyName] = name
 }
 
 func New(address string, timeout *time.Duration) (*Client, error) {
 	client := &Client{
 		Address: address,
-		Timeout: time.Minute,
+		Timeout: time.Second * 20,
 		Logger:  &NullLogger{},
+		Meta:    map[string]string{},
 	}
 	if timeout != nil {
 		client.Timeout = *timeout
@@ -77,17 +89,27 @@ type Request interface {
 	String() string
 }
 
+func (c *Connection) write(message string) error {
+	msgparts := make([]string, 0, len(c.Client.Meta)+1)
+	msgparts = append(msgparts, message)
+	for key, value := range c.Client.Meta {
+		msgparts = append(msgparts, fmt.Sprintf("%s=%s", key, value))
+	}
+	_, err := fmt.Fprint(c.connection, strings.Join(msgparts, ";")+"\n")
+	return err
+}
+
 func (c *Connection) Exec(r Request) error {
 	message := r.String()
 	c.Client.Logger.Println("this -> ", c.Client.Address, message)
-	_, err := fmt.Fprint(c.connection, message+"\n")
+	err := c.write(message)
 	return err
 }
 
 func (c *Connection) QueryOne(r Request) (*Response, error) {
 	message := r.String()
 	c.Client.Logger.Println("this -> ", c.Client.Address, message)
-	if _, err := fmt.Fprint(c.connection, message+"\n"); err != nil {
+	if err := c.write(message); err != nil {
 		return nil, err
 	}
 	nodeResponse, err := bufio.NewReader(c.connection).ReadString('\n')
@@ -96,6 +118,60 @@ func (c *Connection) QueryOne(r Request) (*Response, error) {
 	}
 	c.Client.Logger.Println("this <- ", c.Client.Address, nodeResponse)
 	return &Response{Message: nodeResponse}, nil
+}
+
+type Responses struct {
+	responses chan *Response
+	errors    chan error
+}
+
+func (r *Responses) Next() *Response {
+	if r.responses == nil {
+		return nil
+	}
+	if response, ok := <-r.responses; ok {
+		return response
+	} else {
+		return nil
+	}
+}
+
+func (r *Responses) Err() error {
+	select {
+	case err := <-r.errors:
+		return err
+	default:
+		return nil
+	}
+}
+
+func (c *Connection) QueryMany(r Request) (*Responses, error) {
+	message := r.String()
+	c.Client.Logger.Println("this -> ", c.Client.Address, message)
+	if err := c.write(message); err != nil {
+		return nil, err
+	}
+	responses := &Responses{
+		responses: make(chan *Response),
+		errors:    make(chan error),
+	}
+	go func() {
+		defer close(responses.responses)
+		defer close(responses.errors)
+		for {
+			nodeResponse, err := bufio.NewReader(c.connection).ReadString('\n')
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				responses.errors <- err
+				continue
+			}
+			responses.responses <- &Response{Message: nodeResponse}
+			c.Client.Logger.Println("this <- ", c.Client.Address, nodeResponse)
+		}
+	}()
+	return responses, nil
 }
 
 func (c *Client) Exec(r Request) error {
@@ -116,6 +192,31 @@ func (c *Client) QueryOne(r Request) (*Response, error) {
 	return connection.QueryOne(r)
 }
 
+func (c *Client) QueryMany(r Request) ([]*Response, error) {
+	connection, err := c.Connect()
+	if err != nil {
+		return nil, err
+	}
+	defer connection.Close()
+	responses := []*Response{}
+	responsesc, err := connection.QueryMany(r)
+	if err != nil {
+		return nil, err
+	}
+
+	for {
+		if err := responsesc.Err(); err != nil {
+			return nil, err
+		}
+		response := responsesc.Next()
+		if response == nil {
+			break
+		}
+		responses = append(responses, response)
+	}
+	return responses, nil
+}
+
 type Response struct {
 	Message string
 }
@@ -131,6 +232,39 @@ func (r *Response) Cmd() (string, string) {
 	}
 	args := strings.TrimSpace(parsed[1])
 	return cmd, args
+}
+
+type Push struct {
+	V string
+}
+
+func (p *Push) String() string {
+	return fmt.Sprintf("%s %s", CmdPush, p.V)
+}
+
+func (r *Response) Ok() (bool, error) {
+	cmd, _ := r.Cmd()
+	if cmd != CmdOK && cmd != CmdRefuse {
+		return false, ErrInvalidResponse
+	}
+
+	return cmd == CmdOK, nil
+}
+
+type Get struct {
+	N int
+}
+
+func (p *Get) String() string {
+	return fmt.Sprintf("%s %d", CmdGet, p.N)
+}
+
+type Pull struct {
+	N int
+}
+
+func (p *Pull) String() string {
+	return fmt.Sprintf("%s %d", CmdPull, p.N)
 }
 
 type Prepare struct {
@@ -201,10 +335,11 @@ func (r *Response) Accepted() (*Accepted, error) {
 }
 
 type Set struct {
-	N int
-	V string
+	N  int
+	ID string
+	V  string
 }
 
 func (s *Set) String() string {
-	return fmt.Sprintf("%s %d %s", CmdSet, s.N, s.V)
+	return fmt.Sprintf("%s %d %s %s", CmdSet, s.N, s.ID, s.V)
 }

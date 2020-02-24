@@ -20,6 +20,8 @@ import (
 var backgroundContext context.Context
 
 func main() {
+	log.SetOutput(os.Stdout)
+
 	app := cli.NewApp()
 	app.Name = "Στρεαμ"
 	app.Version = "0.1"
@@ -83,7 +85,7 @@ func Run(c *cli.Context) error {
 		}
 	}
 
-	pxs, err := paxos.NewPaxos(nodes)
+	pxs, err := paxos.NewPaxos(nodes, listenAddress)
 	if err != nil {
 		return err
 	}

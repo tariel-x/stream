@@ -18,6 +18,7 @@ var (
 	availableCmds = map[string]struct{}{
 		client.CmdPush:    {},
 		client.CmdPull:    {},
+		client.CmdGet:     {},
 		client.CmdStatus:  {},
 		client.CmdPrepare: {},
 		client.CmdAccept:  {},
@@ -28,6 +29,7 @@ var (
 type ServerRequest interface {
 	Message() string
 	Address() string
+	Name() string
 }
 
 type ServerResponse interface {
@@ -36,6 +38,7 @@ type ServerResponse interface {
 
 type Log interface {
 	Set(context.Context, int, string) error
+	Get(context.Context, int) ([]string, error)
 	Pull(context.Context, int) (chan string, error)
 }
 
@@ -46,9 +49,10 @@ type AcceptMessage interface {
 }
 
 type Paxos interface {
-	Commit(string) (int, error)
+	Commit(string) ([]AcceptMessage, error)
 	Prepare(n int) (bool, AcceptMessage)
 	Accept(n int, v, id string) bool
+	Set(id string)
 }
 
 type Handler struct {
@@ -82,6 +86,12 @@ func (h *Handler) Process(ctx context.Context, message ServerRequest, response S
 			return err
 		}
 		return h.Push(request, response)
+	case client.CmdGet:
+		request, err := NewGetRequest(*parsed)
+		if err != nil {
+			return err
+		}
+		return h.Get(*request, response)
 	case client.CmdPull:
 		request, err := NewPullRequest(*parsed)
 		if err != nil {
@@ -118,7 +128,11 @@ func parseRawMessage(message string) (*Request, error) {
 	if len(parsed) == 0 {
 		return nil, ErrIncorrectCmd
 	}
-	cmd, rawArgs := parsed[0], parsed[1]
+
+	cmd, rawArgs := parsed[0], ""
+	if len(parsed) == 2 {
+		rawArgs = parsed[1]
+	}
 
 	if _, ok := availableCmds[cmd]; !ok {
 		return nil, ErrIncorrectCmd
@@ -127,6 +141,28 @@ func parseRawMessage(message string) (*Request, error) {
 	return &Request{
 		cmd:  cmd,
 		args: args,
+	}, nil
+}
+
+type GetRequest struct {
+	Request
+	n int
+}
+
+func NewGetRequest(request Request) (*GetRequest, error) {
+	if request.cmd != client.CmdGet {
+		return nil, ErrIncorrectCmd
+	}
+	if len(request.args) == 0 {
+		return nil, ErrIncorrectCmd
+	}
+	n, err := strconv.Atoi(request.args[0])
+	if err != nil {
+		return nil, err
+	}
+	return &GetRequest{
+		Request: request,
+		n:       n,
 	}, nil
 }
 
@@ -220,15 +256,16 @@ func NewAcceptRequest(request Request) (*AcceptRequest, error) {
 
 type SetRequest struct {
 	Request
-	n int
-	v string
+	n  int
+	id string
+	v  string
 }
 
 func NewSetRequest(request Request) (*SetRequest, error) {
 	if request.cmd != client.CmdSet {
 		return nil, ErrIncorrectCmd
 	}
-	if len(request.args) == 0 {
+	if len(request.args) != 3 {
 		return nil, ErrIncorrectCmd
 	}
 	n, err := strconv.Atoi(request.args[0])
@@ -238,6 +275,7 @@ func NewSetRequest(request Request) (*SetRequest, error) {
 	return &SetRequest{
 		Request: request,
 		n:       n,
-		v:       request.args[1],
+		id:      request.args[1],
+		v:       request.args[2],
 	}, nil
 }
