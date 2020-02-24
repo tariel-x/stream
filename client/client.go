@@ -14,6 +14,7 @@ import (
 const (
 	CmdPush     = "PUSH"
 	CmdPull     = "PULL"
+	CmdGet      = "GET"
 	CmdStatus   = "STATUS"
 	CmdPrepare  = "PREPARE"
 	CmdPromise  = "PROMISE"
@@ -248,6 +249,14 @@ func (r *Response) Ok() (bool, error) {
 	}
 
 	return cmd == CmdOK, nil
+}
+
+type Get struct {
+	N int
+}
+
+func (p *Get) String() string {
+	return fmt.Sprintf("%s %d", CmdGet, p.N)
 }
 
 type Pull struct {

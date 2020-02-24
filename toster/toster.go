@@ -120,8 +120,8 @@ func (t *Toster) Begin(wg *sync.WaitGroup) {
 func (t *Toster) Read(wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	log.Printf("PULL 0 from %s", t.node)
-	responses, err := t.client.QueryMany(&client.Pull{N: 0})
+	log.Printf("GET 0 from %s", t.node)
+	responses, err := t.client.QueryMany(&client.Get{N: 0})
 	if err != nil {
 		log.Println("error", err)
 	}

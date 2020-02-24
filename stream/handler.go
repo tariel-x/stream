@@ -19,6 +19,7 @@ var (
 	availableCmds = map[string]struct{}{
 		client.CmdPush:    {},
 		client.CmdPull:    {},
+		client.CmdGet:     {},
 		client.CmdStatus:  {},
 		client.CmdPrepare: {},
 		client.CmdAccept:  {},
@@ -38,6 +39,7 @@ type ServerResponse interface {
 
 type Log interface {
 	Set(context.Context, int, string) error
+	Get(context.Context, int) ([]string, error)
 	Pull(context.Context, int) (chan string, error)
 }
 
@@ -85,6 +87,12 @@ func (h *Handler) Process(ctx context.Context, message ServerRequest, response S
 			return err
 		}
 		return h.Push(request, response)
+	case client.CmdGet:
+		request, err := NewGetRequest(*parsed)
+		if err != nil {
+			return err
+		}
+		return h.Get(*request, response)
 	case client.CmdPull:
 		request, err := NewPullRequest(*parsed)
 		if err != nil {
@@ -135,6 +143,28 @@ func parseRawMessage(message string) (*Request, error) {
 	return &Request{
 		cmd:  cmd,
 		args: args,
+	}, nil
+}
+
+type GetRequest struct {
+	Request
+	n int
+}
+
+func NewGetRequest(request Request) (*GetRequest, error) {
+	if request.cmd != client.CmdGet {
+		return nil, ErrIncorrectCmd
+	}
+	if len(request.args) == 0 {
+		return nil, ErrIncorrectCmd
+	}
+	n, err := strconv.Atoi(request.args[0])
+	if err != nil {
+		return nil, err
+	}
+	return &GetRequest{
+		Request: request,
+		n:       n,
 	}, nil
 }
 

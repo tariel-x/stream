@@ -106,7 +106,8 @@ func (r *Response) Push(message string) {
 }
 
 func (server *Server) accept(parent context.Context, conn net.Conn, errc chan error) {
-	ctx, _ := context.WithCancel(parent)
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
 
 	closeListen := func() {
 		if err := conn.Close(); err != nil {
@@ -136,24 +137,24 @@ func (server *Server) accept(parent context.Context, conn net.Conn, errc chan er
 		return
 	}
 	request, err := makeRequest(input, conn.RemoteAddr().String())
-	if name, ok := meta[client.MetaKeyName]; ok {
-		request.name = name
-	}
-
 	if err != nil {
 		if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
-			errc <- err
+			log.Printf("error parsing query from %s: %s", conn.RemoteAddr().String(), err)
 			return
 		}
 		return
 	}
+	if name, ok := meta[client.MetaKeyName]; ok {
+		request.name = name
+	}
+
 	//log.Printf("this <- %s %s\n", request.Name(), request.Message())
 	response := NewResponse()
 	go func() {
 		defer close(response.messages)
 		if err = server.handler.Process(ctx, request, response); err != nil {
 			if _, err := conn.Write([]byte(err.Error() + "\n")); err != nil {
-				errc <- err
+				log.Println("error executing query", err)
 				return
 			}
 			return
@@ -162,7 +163,7 @@ func (server *Server) accept(parent context.Context, conn net.Conn, errc chan er
 	for message := range response.messages {
 		//log.Printf("this -> %s %s", request.Name(), message)
 		if _, err := conn.Write([]byte(message + "\n")); err != nil {
-			errc <- err
+			log.Println("error writing to client", err)
 			return
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 )
 
 type item struct {
@@ -13,21 +14,54 @@ type item struct {
 	previous *item
 }
 
+type wait struct {
+	c      chan *item
+	count  uint64
+	border *item
+}
+
 type Log struct {
-	first *item
-	last  *item
-	m     *sync.RWMutex
+	first       *item
+	last        *item
+	m           sync.RWMutex
+	count       uint64
+	waitlist    map[uint64]wait
+	connections *uint64
 }
 
 func NewLog() (*Log, error) {
-	return &Log{
-		m: &sync.RWMutex{},
-	}, nil
+	l := &Log{
+		m:           sync.RWMutex{},
+		waitlist:    map[uint64]wait{},
+		connections: new(uint64),
+	}
+	atomic.StoreUint64(l.connections, 0)
+	return l, nil
+}
+
+func (l *Log) removeWait(i uint64) {
+	l.m.Lock()
+	defer l.m.Unlock()
+	delete(l.waitlist, i)
+}
+
+func (l *Log) addWait(w wait) uint64 {
+	l.m.Lock()
+	defer l.m.Unlock()
+	i := atomic.AddUint64(l.connections, 1)
+	l.waitlist[i] = w
+	return i
 }
 
 func (l *Log) Set(ctx context.Context, n int, v string) error {
 	l.m.Lock()
 	defer l.m.Unlock()
+	defer func() {
+		for _, w := range l.waitlist {
+			w.c <- l.last
+		}
+	}()
+	l.count++
 	if l.first == nil || l.last == nil {
 		l.init(n, v)
 		return nil
@@ -35,13 +69,17 @@ func (l *Log) Set(ctx context.Context, n int, v string) error {
 
 	// Search correct position.
 	cursor := l.last
-	for cursor.n >= n {
+	if l.last == nil {
+	}
+	for cursor.previous != nil && cursor.n >= n {
 		cursor = cursor.previous
 	}
+	// Found element is the last.
 	if l.last == cursor && cursor.next == nil {
 		l.append(n, v)
 		return nil
 	}
+	// Insert in the middle of the list.
 	l.insert(cursor, cursor.next, n, v)
 	return nil
 }
@@ -84,20 +122,60 @@ func (l *Log) insert(left, right *item, n int, v string) {
 	}
 }
 
+func (l *Log) Get(ctx context.Context, n int) ([]string, error) {
+	if n < 0 {
+		return nil, errors.New("invalid n")
+	}
+	l.m.RLock()
+	defer l.m.RUnlock()
+	cursor := l.first
+	if cursor == nil {
+		return nil, nil
+	}
+	for cursor.n < n {
+		cursor = cursor.next
+	}
+	var results []string
+	for cursor != nil {
+		select {
+		case <-ctx.Done():
+			return results, nil
+		default:
+		}
+		if cursor.n < n {
+			continue
+		}
+		results = append(results, cursor.v)
+		cursor = cursor.next
+	}
+
+	return results, nil
+}
+
 func (l *Log) Pull(ctx context.Context, n int) (chan string, error) {
 	if n < 0 {
 		return nil, errors.New("invalid n")
 	}
-	results := make(chan string)
-	cursor := l.first
-	for cursor.n < n {
-		cursor = cursor.next
+	w := wait{
+		c:      make(chan *item, l.count),
+		border: l.last,
 	}
+	thiswait := l.addWait(w)
+
+	results := make(chan string)
 	go func() {
-		l.m.RLock()
-		defer l.m.RUnlock()
 		defer close(results)
-		for cursor != nil {
+		defer close(w.c)
+		defer l.removeWait(thiswait)
+
+		l.m.RLock()
+		cursor := l.first
+		for cursor != nil && cursor.n < n {
+			cursor = cursor.next
+		}
+
+		alreadySent := map[int]struct{}{}
+		for cursor != nil && cursor.n <= w.border.n {
 			select {
 			case <-ctx.Done():
 				return
@@ -107,7 +185,24 @@ func (l *Log) Pull(ctx context.Context, n int) (chan string, error) {
 				continue
 			}
 			results <- cursor.v
+			alreadySent[cursor.n] = struct{}{}
 			cursor = cursor.next
+		}
+		l.m.RUnlock()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case new, ok := <-w.c:
+				if !ok {
+					return
+				}
+				if _, ok := alreadySent[new.n]; ok {
+					continue
+				}
+				results <- new.v
+			}
 		}
 	}()
 

@@ -17,8 +17,8 @@ func TestLog_Set(t *testing.T) {
 
 	expected := []string{"b", "c", "d", "e"}
 	var actual []string
-	results, _ := l.Pull(ctx, 1)
-	for letter := range results {
+	results, _ := l.Get(ctx, 1)
+	for _, letter := range results {
 		t.Log(letter)
 		actual = append(actual, letter)
 	}

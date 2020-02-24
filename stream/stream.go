@@ -37,6 +37,17 @@ func (h *Handler) Status(response ServerResponse) error {
 	return nil
 }
 
+func (h *Handler) Get(request GetRequest, response ServerResponse) error {
+	results, err := h.log.Get(request.ctx, request.n)
+	if err != nil {
+		return err
+	}
+	for _, result := range results {
+		response.Push(result)
+	}
+	return nil
+}
+
 func (h *Handler) Pull(request PullRequest, response ServerResponse) error {
 	results, err := h.log.Pull(request.ctx, request.n)
 	if err != nil {

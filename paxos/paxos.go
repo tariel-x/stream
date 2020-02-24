@@ -150,7 +150,6 @@ func (p *paxos) commit(v, id string) (*AcceptMessage, error) {
 	var err error
 
 	qid := p.randInc()
-	log.Printf("commit thread %d id %s %s", qid, id, v)
 
 commitCycle:
 	for {
@@ -161,7 +160,6 @@ commitCycle:
 			case nil:
 				break promisePhase
 			case ErrQuorumFailed:
-				log.Printf("prepare quorum failed thread %d id %s %s, N=%d", qid, id, v, atomic.LoadUint64(p.n))
 				atomic.AddUint64(p.n, p.randInc()) //TODO: set max proposed N in quorum + 1
 			default:
 				return nil, err
