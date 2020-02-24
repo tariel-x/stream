@@ -8,8 +8,8 @@ import (
 	"net"
 	"strings"
 
-	"github.com/tariel-x/whynot/client"
-	"github.com/tariel-x/whynot/stream"
+	"github.com/tariel-x/stream/client"
+	"github.com/tariel-x/stream/stream"
 )
 
 type Server struct {

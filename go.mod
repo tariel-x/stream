@@ -1,4 +1,4 @@
-module github.com/tariel-x/whynot
+module github.com/tariel-x/stream
 
 go 1.12
 

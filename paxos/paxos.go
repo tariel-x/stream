@@ -9,8 +9,8 @@ import (
 
 	"github.com/satori/go.uuid"
 
-	"github.com/tariel-x/whynot/client"
-	"github.com/tariel-x/whynot/stream"
+	"github.com/tariel-x/stream/client"
+	"github.com/tariel-x/stream/stream"
 )
 
 var (

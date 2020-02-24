@@ -11,10 +11,10 @@ import (
 
 	"github.com/urfave/cli"
 
-	storage "github.com/tariel-x/whynot/log"
-	"github.com/tariel-x/whynot/paxos"
-	"github.com/tariel-x/whynot/server"
-	"github.com/tariel-x/whynot/stream"
+	storage "github.com/tariel-x/stream/log"
+	"github.com/tariel-x/stream/paxos"
+	"github.com/tariel-x/stream/server"
+	"github.com/tariel-x/stream/stream"
 )
 
 var backgroundContext context.Context

@@ -3,7 +3,7 @@ package stream
 import (
 	"fmt"
 
-	"github.com/tariel-x/whynot/client"
+	"github.com/tariel-x/stream/client"
 )
 
 func (h *Handler) Push(request *PushRequest, response ServerResponse) error {

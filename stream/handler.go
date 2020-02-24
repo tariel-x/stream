@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tariel-x/whynot/client"
+	"github.com/tariel-x/stream/client"
 )
 
 var (

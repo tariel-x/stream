@@ -11,7 +11,7 @@ import (
 
 	"github.com/urfave/cli"
 
-	"github.com/tariel-x/whynot/client"
+	"github.com/tariel-x/stream/client"
 )
 
 func main() {
